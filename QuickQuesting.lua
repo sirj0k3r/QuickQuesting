@@ -27,6 +27,7 @@ QQ_DEFAULTS = {
     rewardMode = "nothing",
     questScope = "all",
     modifier = "shift",
+    autoShare = false,
 };
 
 QQ_RewardOptions = {
@@ -70,6 +71,9 @@ function QQ_InitDB()
     end
     if (not IsValidOption(QQ_ModifierOptions, QuickQuestingDB.modifier)) then
         QuickQuestingDB.modifier = QQ_DEFAULTS.modifier;
+    end
+    if (type(QuickQuestingDB.autoShare) ~= "boolean") then
+        QuickQuestingDB.autoShare = QQ_DEFAULTS.autoShare;
     end
 
     if (type(QuickQuestingDB.exceptions) ~= "table") then
@@ -274,6 +278,690 @@ QQ_RewardStrategies.sellPrice = function(numChoices)
     end
     return bestIndex;
 end
+
+---------------------------------------------------------------------------
+-- Auto share
+---------------------------------------------------------------------------
+
+-- Pushing a later quest while a member still has an earlier popup open relies on the server
+-- answering "busy" and leaving that popup alone; set false to always wait for every member
+-- before the next quest.
+local SHARE_ALLOW_OVERLAP = true;
+local SHARE_ACK_SECONDS = 3;
+local SHARE_REPLY_SECONDS = 60;
+local SHARE_LATE_SECONDS = 300;
+local SHARE_LOG_GRACE_SECONDS = 5;
+local SHARE_MAX_PUSHES = 5;
+local SHARE_INFLECT_BYTES = 4;
+local SHARE_REPEAT_SECONDS = 0.05;
+
+local SHARE_OPEN = 1;
+local SHARE_BUSY = 2;
+local SHARE_DONE = 3;
+
+-- The replies only need listening to while something is being shared.
+local SHARE_ACTIVE_EVENTS = {
+    "CHAT_MSG_SYSTEM",
+    "UI_INFO_MESSAGE",
+    "UI_ERROR_MESSAGE",
+    "QUEST_LOG_UPDATE",
+    "QUEST_REMOVED",
+    "QUEST_TURNED_IN",
+    "GROUP_ROSTER_UPDATE",
+    "PLAYER_REGEN_ENABLED",
+    "ADDON_RESTRICTION_STATE_CHANGED",
+};
+
+local SHARE_REPLY_KINDS = {
+    { kind = "sent", suffixes = { "SUCCESS" } },
+    { kind = "busy", suffixes = { "BUSY" } },
+    { kind = "answer", suffixes = { "ACCEPTED", "DECLINED" } },
+    { kind = "final", suffixes = {
+        "ALREADY_DONE", "CLASS", "DEAD", "DIFFERENT_SERVER_DAILY", "EXPANSION", "HIGH_FACTION",
+        "HIGH_LEVEL", "INVALID", "LOG_FULL", "LOW_FACTION", "LOW_LEVEL", "NEW_PLAYER_EXPERIENCE",
+        "NOT_GARRISON_OWNER", "ONQUEST", "PREREQUISITE", "RACE", "TOO_FAR", "WRONG_COVENANT",
+        "WRONG_FACTION",
+    } },
+};
+
+-- Replies that name no player, matched by exact text.
+local SHARE_NAMELESS_KINDS = {
+    { kind = "questBlocked", keys = { "ERR_QUEST_PUSH_NOT_ALLOWED_S", "ERR_QUEST_PUSH_NOT_DAILY_S" } },
+    { kind = "groupBlocked", keys = { "ERR_QUEST_PUSH_NOT_IN_PARTY_S", "ERR_QUEST_PUSH_CROSS_FACTION_RESTRICTED_S" } },
+};
+
+local shareFrame = nil;
+local shareQueue = {};
+local shareOpen = {};
+local shareEntry = nil;
+local shareFlight = false;
+local shareFlightDeadline = nil;
+local shareExpected = {};
+local shareRoster = {};
+local shareRosterBase = {};
+local shareAllowOverlap = SHARE_ALLOW_OVERLAP;
+local shareLoading = false;
+local shareTimer = nil;
+local sharePatterns = nil;
+local shareNameless = nil;
+local shareActive = false;
+local shareRecent = {};
+
+local OnShareTimer;
+local PumpShareQueue;
+
+local function IsSecret(value)
+    return issecretvalue ~= nil and issecretvalue(value);
+end
+
+local function StripGrammar(text)
+    text = text:gsub("|3%-%d+%((.-)%)", "%1");
+    text = text:gsub("|2 ?", "");
+    text = text:gsub("|1[^;]*;[^;]*;", "");
+    return text;
+end
+
+local function CleanShareText(text)
+    text = text:gsub("|c%x%x%x%x%x%x%x%x", "");
+    text = text:gsub("|r", "");
+    text = text:gsub("|H.-|h", "");
+    text = text:gsub("|h", "");
+    return StripGrammar(text);
+end
+
+local function BuildSharePatterns()
+    if (sharePatterns ~= nil) then
+        return;
+    end
+
+    sharePatterns = {};
+    for _, group in ipairs(SHARE_REPLY_KINDS) do
+        for _, suffix in ipairs(group.suffixes) do
+            local format = _G["ERR_QUEST_PUSH_" .. suffix .. "_S"];
+            if (type(format) == "string") then
+                local stripped = StripGrammar(format);
+                local fuzzy = stripped ~= format;
+                local pattern = stripped:gsub("%%%d*%$?s", "\001");
+                if (pattern:find("\001", 1, true)) then
+                    pattern = pattern:gsub("[%^%$%(%)%%%.%[%]%*%+%-%?]", "%%%0");
+                    pattern = pattern:gsub("\001", "(.+)");
+                    sharePatterns[#sharePatterns + 1] = { pattern = "^" .. pattern .. "$", kind = group.kind, fuzzy = fuzzy };
+                end
+            end
+        end
+    end
+
+    shareNameless = {};
+    for _, group in ipairs(SHARE_NAMELESS_KINDS) do
+        for _, key in ipairs(group.keys) do
+            local text = _G[key];
+            if (type(text) == "string") then
+                shareNameless[text] = group.kind;
+            end
+        end
+    end
+end
+
+local function RefreshShareRoster()
+    wipe(shareRoster);
+    wipe(shareRosterBase);
+
+    local prefix = IsInRaid() and "raid" or "party";
+    for i = 1, GetNumGroupMembers() do
+        local unit = prefix .. i;
+        if (UnitExists(unit) and not UnitIsUnit(unit, "player") and UnitIsConnected(unit)) then
+            local name, realm = UnitName(unit);
+            if (name ~= nil and not IsSecret(name) and not IsSecret(realm) and name ~= UNKNOWNOBJECT) then
+                local key = name;
+                if (realm ~= nil and realm ~= "") then
+                    key = name .. "-" .. (realm:gsub(" ", ""));
+                end
+                shareRoster[key] = true;
+                if (shareRosterBase[name] == nil) then
+                    shareRosterBase[name] = key;
+                else
+                    shareRosterBase[name] = false;
+                end
+            end
+        end
+    end
+end
+
+-- Returns the roster key for a name, and whether the name matched several members.
+local function LookupRosterKey(key)
+    if (shareRoster[key]) then
+        return key, false;
+    end
+    local base = key:match("^([^-]+)");
+    local owner = base and shareRosterBase[base];
+    if (owner) then
+        return owner, false;
+    end
+    return nil, owner == false;
+end
+
+-- Some clients (ruRU, koKR, frFR) put the name through grammar tokens, so it can arrive
+-- inflected or prefixed. A name that still does not match just falls to the timeout.
+local function ResolveShareName(captured, fuzzy)
+    captured = captured:match("^%[(.+)%]$") or captured;
+
+    local found, ambiguous = LookupRosterKey((captured:gsub("%s", "")));
+    if (found) then
+        return found;
+    end
+    if (ambiguous or not fuzzy) then
+        return nil;
+    end
+
+    captured = captured:gsub("^de%s+", "");
+    captured = captured:gsub("^d'", "");
+    captured = captured:gsub("^d\226\128\153", "");
+    local cleaned = captured:gsub("%s", "");
+    found, ambiguous = LookupRosterKey(cleaned);
+    if (found) then
+        return found;
+    end
+    if (ambiguous) then
+        return nil;
+    end
+
+    local match = nil;
+    local matches = 0;
+    for baseName, owner in pairs(shareRosterBase) do
+        if (owner) then
+            local common = 0;
+            local limit = math.min(#baseName, #cleaned);
+            while (common < limit and baseName:byte(common + 1) == cleaned:byte(common + 1)) do
+                common = common + 1;
+            end
+            if (common >= math.max(2, #baseName - SHARE_INFLECT_BYTES)) then
+                match = owner;
+                matches = matches + 1;
+            end
+        end
+    end
+    if (matches == 1) then
+        return match;
+    end
+    return nil;
+end
+
+local function IsSharePaused()
+    return shareLoading or InCombatLockdown()
+        or (C_ChatInfo.InChatMessagingLockdown and C_ChatInfo.InChatMessagingLockdown());
+end
+
+local function FindShareEntry(questID)
+    for _, entry in ipairs(shareQueue) do
+        if (entry.questID == questID) then
+            return entry;
+        end
+    end
+    return nil;
+end
+
+local function RemoveShareEntry(target)
+    for i, entry in ipairs(shareQueue) do
+        if (entry == target) then
+            table.remove(shareQueue, i);
+            return;
+        end
+    end
+end
+
+local function ArmShareTimer()
+    if (shareTimer) then
+        shareTimer:Cancel();
+        shareTimer = nil;
+    end
+
+    local earliest = nil;
+    if (shareFlight) then
+        earliest = shareFlightDeadline;
+    end
+    for _, open in pairs(shareOpen) do
+        local at = open.expired and open.forgetAt or open.deadline;
+        if (earliest == nil or at < earliest) then
+            earliest = at;
+        end
+    end
+    for _, entry in ipairs(shareQueue) do
+        if (not entry.ready) then
+            local at = entry.addedAt + SHARE_LOG_GRACE_SECONDS;
+            if (earliest == nil or at < earliest) then
+                earliest = at;
+            end
+        end
+    end
+    if (earliest == nil) then
+        return;
+    end
+
+    shareTimer = C_Timer.NewTimer(math.max(earliest - GetTime(), 0.1), OnShareTimer);
+end
+
+local function StopShareIfIdle()
+    if (#shareQueue == 0 and next(shareOpen) == nil and not shareFlight) then
+        for _, event in ipairs(SHARE_ACTIVE_EVENTS) do
+            shareFrame:UnregisterEvent(event);
+        end
+        if (shareTimer) then
+            shareTimer:Cancel();
+            shareTimer = nil;
+        end
+        shareEntry = nil;
+        wipe(shareExpected);
+        wipe(shareRecent);
+        shareActive = false;
+        return true;
+    end
+    return false;
+end
+
+local function StartShareEvents()
+    if (shareActive) then
+        return;
+    end
+    BuildSharePatterns();
+    RefreshShareRoster();
+    for _, event in ipairs(SHARE_ACTIVE_EVENTS) do
+        shareFrame:RegisterEvent(event);
+    end
+    shareActive = true;
+end
+
+function QQ_ClearShareQueue()
+    if (not shareActive) then
+        return;
+    end
+    wipe(shareQueue);
+    wipe(shareOpen);
+    wipe(shareExpected);
+    shareFlight = false;
+    shareFlightDeadline = nil;
+    StopShareIfIdle();
+end
+
+local function PruneShareQueue()
+    for i = #shareQueue, 1, -1 do
+        local entry = shareQueue[i];
+        if (entry.pushes > 0 and not (shareFlight and entry == shareEntry)) then
+            if (entry.pushes >= SHARE_MAX_PUSHES) then
+                for name, state in pairs(entry.members) do
+                    if (state == SHARE_BUSY) then
+                        entry.members[name] = SHARE_DONE;
+                    end
+                end
+            end
+            local waiting = false;
+            for _, state in pairs(entry.members) do
+                if (state == SHARE_OPEN or state == SHARE_BUSY) then
+                    waiting = true;
+                    break;
+                end
+            end
+            if (not waiting) then
+                table.remove(shareQueue, i);
+            end
+        end
+    end
+end
+
+local function IsShareWanted(entry)
+    if (entry.pushes >= SHARE_MAX_PUSHES) then
+        return false;
+    end
+    for name in pairs(shareRoster) do
+        local open = shareOpen[name];
+        local state = entry.members[name];
+        if (entry.pushes == 0) then
+            -- A member whose popup timed out does not hold back a new quest.
+            if (state == nil and (open == nil or open.expired)) then
+                return true;
+            end
+        elseif (state == SHARE_BUSY and open == nil) then
+            return true;
+        end
+    end
+    return false;
+end
+
+local function HasActivePopup()
+    for _, open in pairs(shareOpen) do
+        if (not open.expired) then
+            return true;
+        end
+    end
+    return false;
+end
+
+local function UpdateShareReadiness()
+    for i = #shareQueue, 1, -1 do
+        local entry = shareQueue[i];
+        if (not entry.ready) then
+            local index = C_QuestLog.GetLogIndexForQuestID(entry.questID);
+            if (index) then
+                if (C_QuestLog.IsPushableQuest(entry.questID)) then
+                    entry.ready = true;
+                else
+                    table.remove(shareQueue, i);
+                end
+            elseif (GetTime() - entry.addedAt >= SHARE_LOG_GRACE_SECONDS) then
+                table.remove(shareQueue, i);
+            end
+        end
+    end
+end
+
+PumpShareQueue = function()
+    PruneShareQueue();
+    if (StopShareIfIdle()) then
+        return;
+    end
+    if (not IsInGroup()) then
+        QQ_ClearShareQueue();
+        return;
+    end
+    if (C_PartyInfo.IsCrossFactionParty and C_PartyInfo.IsCrossFactionParty()) then
+        QQ_ClearShareQueue();
+        return;
+    end
+    if (next(shareRoster) == nil) then
+        QQ_ClearShareQueue();
+        return;
+    end
+
+    if (not shareFlight and not IsSharePaused() and (shareAllowOverlap or not HasActivePopup())) then
+        local i = 1;
+        while (shareQueue[i]) do
+            local entry = shareQueue[i];
+            if (not entry.ready) then
+                break; -- keep FIFO order
+            end
+            if (IsShareWanted(entry)) then
+                -- The log index is passed so the quest selected in the log is never touched.
+                local index = C_QuestLog.GetLogIndexForQuestID(entry.questID);
+                if (index and C_QuestLog.IsPushableQuest(entry.questID) and pcall(QuestLogPushQuest, index)) then
+                    entry.pushes = entry.pushes + 1;
+                    shareEntry = entry;
+                    shareFlight = true;
+                    shareFlightDeadline = GetTime() + SHARE_ACK_SECONDS;
+                    wipe(shareExpected);
+                    for name in pairs(shareRoster) do
+                        shareExpected[name] = true;
+                    end
+                    break;
+                end
+                table.remove(shareQueue, i);
+            else
+                i = i + 1;
+            end
+        end
+    end
+
+    ArmShareTimer();
+end
+
+-- Anything not answered may have received the popup, and the timeout covers it. The caller
+-- pumps the queue afterwards.
+local function EndShareFlight()
+    if (not shareFlight) then
+        return;
+    end
+    shareFlight = false;
+    shareFlightDeadline = nil;
+
+    for name in pairs(shareExpected) do
+        if (shareRoster[name] and shareOpen[name] == nil and shareEntry.members[name] ~= SHARE_DONE) then
+            shareEntry.members[name] = SHARE_OPEN;
+            shareOpen[name] = { entry = shareEntry, deadline = GetTime() + SHARE_REPLY_SECONDS, expired = false, assumed = true };
+        end
+    end
+    wipe(shareExpected);
+end
+
+local function ClearSharePopup(name)
+    shareOpen[name] = nil;
+end
+
+OnShareTimer = function()
+    shareTimer = nil;
+    local now = GetTime();
+
+    if (shareFlight and now >= shareFlightDeadline) then
+        EndShareFlight();
+    end
+
+    for name, open in pairs(shareOpen) do
+        if (open.expired) then
+            if (now >= open.forgetAt) then
+                ClearSharePopup(name);
+                for _, entry in ipairs(shareQueue) do
+                    if (entry.members[name] == SHARE_BUSY) then
+                        entry.members[name] = SHARE_DONE;
+                    end
+                end
+            end
+        elseif (now >= open.deadline) then
+            open.expired = true;
+            open.forgetAt = now + SHARE_LATE_SECONDS;
+            -- Timed out: final for this quest, never a reason to push it again.
+            if (open.entry.members[name] == SHARE_OPEN) then
+                open.entry.members[name] = SHARE_DONE;
+            end
+        end
+    end
+
+    UpdateShareReadiness();
+    PumpShareQueue();
+end
+
+local function OnShareSent(name)
+    local entry = shareEntry;
+    local open = shareOpen[name];
+    if (open and open.entry ~= entry and not open.expired) then
+        -- The server gave this member a new popup while we believed another one was open, so the
+        -- busy assumption does not hold here. Stop overlapping for this session and offer the
+        -- displaced quest again. A popup only assumed from silence proves nothing either way.
+        if (not open.assumed) then
+            shareAllowOverlap = false;
+        end
+        if (open.entry.members[name] == SHARE_OPEN) then
+            open.entry.members[name] = SHARE_BUSY;
+        end
+    end
+    shareOpen[name] = { entry = entry, deadline = GetTime() + SHARE_REPLY_SECONDS, expired = false };
+    if (entry.members[name] ~= SHARE_DONE) then
+        entry.members[name] = SHARE_OPEN;
+    end
+end
+
+local function OnShareBusy(name)
+    local entry = shareEntry;
+    local open = shareOpen[name];
+    if (open and open.entry == entry) then
+        return;
+    end
+    if (entry.members[name] == SHARE_DONE) then
+        return;
+    end
+    if (open) then
+        entry.members[name] = (entry.pushes >= SHARE_MAX_PUSHES) and SHARE_DONE or SHARE_BUSY;
+    else
+        -- Cause unknown and no answer will ever arrive to trigger a retry.
+        entry.members[name] = SHARE_DONE;
+    end
+end
+
+-- Does not touch shareOpen: an earlier popup may still be open.
+local function OnShareFinal(name)
+    shareEntry.members[name] = SHARE_DONE;
+end
+
+-- Answers name a player and not a quest, so they belong to whichever popup that member has open.
+local function OnShareAnswer(name)
+    local open = shareOpen[name];
+    if (open == nil) then
+        return;
+    end
+    open.entry.members[name] = SHARE_DONE;
+    ClearSharePopup(name);
+end
+
+-- The same reply can arrive through more than one event, and the first copy may already have
+-- started the next push, so a second copy must not be read as a reply to that one.
+local function IsShareRepeat(text)
+    local now = GetTime();
+    local last = shareRecent[text];
+    shareRecent[text] = now;
+    return last ~= nil and now - last < SHARE_REPEAT_SECONDS;
+end
+
+local function OnShareMessage(text)
+    if (IsSecret(text) or type(text) ~= "string") then
+        return;
+    end
+    text = CleanShareText(text);
+
+    local nameless = shareNameless[text];
+    if (nameless and IsShareRepeat(text)) then
+        return;
+    end
+    if (nameless == "groupBlocked") then
+        QQ_ClearShareQueue();
+        return;
+    elseif (nameless == "questBlocked") then
+        if (shareFlight and shareEntry) then
+            wipe(shareExpected);
+            EndShareFlight();
+            RemoveShareEntry(shareEntry);
+            PumpShareQueue();
+        end
+        return;
+    end
+
+    for _, p in ipairs(sharePatterns) do
+        local captured = text:match(p.pattern);
+        if (captured) then
+            local name = ResolveShareName(captured, p.fuzzy);
+            if (not name or IsShareRepeat(text)) then
+                return;
+            end
+            if (p.kind == "answer") then
+                OnShareAnswer(name);
+            else
+                if (shareEntry == nil) then
+                    return;
+                end
+                if (p.kind == "sent") then
+                    OnShareSent(name);
+                elseif (p.kind == "busy") then
+                    OnShareBusy(name);
+                else
+                    OnShareFinal(name);
+                end
+                shareExpected[name] = nil;
+                if (shareFlight and next(shareExpected) == nil) then
+                    EndShareFlight();
+                end
+            end
+            PumpShareQueue();
+            return;
+        end
+    end
+end
+
+local function OnShareAccepted(questID)
+    if (not (QuickQuestingDB and QuickQuestingDB.autoShare)) then
+        return;
+    end
+    if (not IsInGroup()) then
+        return;
+    end
+    if (FindShareEntry(questID)) then
+        return;
+    end
+
+    StartShareEvents();
+    shareQueue[#shareQueue + 1] = { questID = questID, addedAt = GetTime(), ready = false, pushes = 0, members = {} };
+    ArmShareTimer();
+end
+
+-- A separate frame so the skip key never affects sharing.
+shareFrame = CreateFrame("Frame");
+shareFrame:RegisterEvent("QUEST_ACCEPTED");
+shareFrame:RegisterEvent("PLAYER_LEAVING_WORLD");
+shareFrame:RegisterEvent("PLAYER_ENTERING_WORLD");
+
+shareFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
+    if (event == "QUEST_ACCEPTED") then
+        OnShareAccepted(arg1);
+        return;
+    elseif (event == "PLAYER_LEAVING_WORLD") then
+        shareLoading = true;
+        return;
+    elseif (event == "PLAYER_ENTERING_WORLD") then
+        shareLoading = false;
+        if (shareActive) then
+            PumpShareQueue();
+        end
+        return;
+    end
+
+    if (not shareActive) then
+        return;
+    end
+
+    if (event == "CHAT_MSG_SYSTEM") then
+        OnShareMessage(arg1);
+    elseif (event == "UI_INFO_MESSAGE" or event == "UI_ERROR_MESSAGE") then
+        OnShareMessage(arg2);
+    elseif (event == "QUEST_LOG_UPDATE") then
+        -- Frequent, so bail out unless some quest is still waiting for the log.
+        local waiting = false;
+        for _, entry in ipairs(shareQueue) do
+            if (not entry.ready) then
+                waiting = true;
+                break;
+            end
+        end
+        if (waiting) then
+            UpdateShareReadiness();
+            PumpShareQueue();
+        end
+    elseif (event == "QUEST_REMOVED" or event == "QUEST_TURNED_IN") then
+        local entry = FindShareEntry(arg1);
+        if (entry) then
+            RemoveShareEntry(entry);
+            PumpShareQueue();
+        end
+    elseif (event == "GROUP_ROSTER_UPDATE") then
+        RefreshShareRoster();
+        for name in pairs(shareOpen) do
+            if (not shareRoster[name]) then
+                shareOpen[name] = nil;
+            end
+        end
+        for name in pairs(shareExpected) do
+            if (not shareRoster[name]) then
+                shareExpected[name] = nil;
+            end
+        end
+        for _, entry in ipairs(shareQueue) do
+            for name in pairs(entry.members) do
+                if (not shareRoster[name]) then
+                    entry.members[name] = nil;
+                end
+            end
+        end
+        if (shareFlight and next(shareExpected) == nil) then
+            EndShareFlight();
+        end
+        PumpShareQueue();
+    elseif (event == "PLAYER_REGEN_ENABLED" or event == "ADDON_RESTRICTION_STATE_CHANGED") then
+        PumpShareQueue();
+    end
+end)
 
 ---------------------------------------------------------------------------
 -- Event handlers

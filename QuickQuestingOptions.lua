@@ -10,6 +10,7 @@ local panel = nil;
 local radioGroups = {};
 local exceptionList = nil;
 local emptyLabel = nil;
+local autoShareCheck = nil;
 
 ---------------------------------------------------------------------------
 -- Radio groups
@@ -98,6 +99,7 @@ function QQ_RefreshOptions()
     for _, group in ipairs(radioGroups) do
         RefreshRadioGroup(group);
     end
+    autoShareCheck:SetChecked(QuickQuestingDB.autoShare);
 
     local dataProvider = CreateDataProvider();
     dataProvider:SetSortComparator(CompareExceptions, true);
@@ -166,6 +168,21 @@ local function CreatePanel()
     CreateHeader(panel, "Hold this key to skip automation", y);
     y = CreateRadioGroup(panel, "modifier", QQ_ModifierOptions, y - 26);
 
+    y = y - 6;
+    autoShareCheck = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate");
+    autoShareCheck:SetSize(24, 24);
+    autoShareCheck:SetPoint("TOPLEFT", panel, "TOPLEFT", 24, y);
+    autoShareCheck.text:SetFontObject("GameFontHighlight");
+    autoShareCheck.text:SetText("Share quests you accept with your party");
+    autoShareCheck:SetHitRectInsets(0, -(autoShareCheck.text:GetStringWidth() + 10), 0, 0);
+    autoShareCheck:SetScript("OnClick", function(self)
+        QuickQuestingDB.autoShare = self:GetChecked() and true or false;
+        if (not QuickQuestingDB.autoShare) then
+            QQ_ClearShareQueue();
+        end
+    end);
+    y = y - 28;
+
     y = y - 12;
     CreateHeader(panel, "Exceptions (never handled automatically)", y);
     y = y - 30;
@@ -233,6 +250,8 @@ local function CreatePanel()
         QuickQuestingDB.rewardMode = QQ_DEFAULTS.rewardMode;
         QuickQuestingDB.questScope = QQ_DEFAULTS.questScope;
         QuickQuestingDB.modifier = QQ_DEFAULTS.modifier;
+        QuickQuestingDB.autoShare = QQ_DEFAULTS.autoShare;
+        QQ_ClearShareQueue();
         QQ_RefreshOptions();
     end;
 
