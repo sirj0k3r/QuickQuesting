@@ -292,7 +292,6 @@ end
 local SHARE_ACK_SECONDS = 3;
 local SHARE_REPLY_SECONDS = 60;
 local SHARE_LATE_SECONDS = 300;
-local SHARE_LOG_GRACE_SECONDS = 5;
 local SHARE_MAX_PUSHES = 5;
 local SHARE_INFLECT_BYTES = 4;
 
@@ -303,7 +302,6 @@ local SHARE_DONE = 3;
 -- The replies only need listening to while something is being shared.
 local SHARE_ACTIVE_EVENTS = {
     "CHAT_MSG_SYSTEM",
-    "QUEST_LOG_UPDATE",
     "QUEST_REMOVED",
     "QUEST_TURNED_IN",
     "GROUP_ROSTER_UPDATE",
@@ -521,14 +519,6 @@ local function ArmShareTimer()
             earliest = at;
         end
     end
-    for _, entry in ipairs(shareQueue) do
-        if (not entry.ready) then
-            local at = entry.addedAt + SHARE_LOG_GRACE_SECONDS;
-            if (earliest == nil or at < earliest) then
-                earliest = at;
-            end
-        end
-    end
     if (earliest == nil) then
         return;
     end
@@ -622,24 +612,6 @@ local function IsShareWanted(entry)
     return false;
 end
 
-local function UpdateShareReadiness()
-    for i = #shareQueue, 1, -1 do
-        local entry = shareQueue[i];
-        if (not entry.ready) then
-            local index = C_QuestLog.GetLogIndexForQuestID(entry.questID);
-            if (index) then
-                if (C_QuestLog.IsPushableQuest(entry.questID)) then
-                    entry.ready = true;
-                else
-                    table.remove(shareQueue, i);
-                end
-            elseif (GetTime() - entry.addedAt >= SHARE_LOG_GRACE_SECONDS) then
-                table.remove(shareQueue, i);
-            end
-        end
-    end
-end
-
 PumpShareQueue = function()
     PruneShareQueue();
     if (StopShareIfIdle()) then
@@ -662,9 +634,6 @@ PumpShareQueue = function()
         local i = 1;
         while (shareQueue[i]) do
             local entry = shareQueue[i];
-            if (not entry.ready) then
-                break; -- keep FIFO order
-            end
             if (IsShareWanted(entry)) then
                 -- The log index is passed so the quest selected in the log is never touched.
                 local index = C_QuestLog.GetLogIndexForQuestID(entry.questID);
@@ -739,7 +708,6 @@ OnShareTimer = function()
         end
     end
 
-    UpdateShareReadiness();
     PumpShareQueue();
 end
 
@@ -858,10 +826,13 @@ local function OnShareAccepted(questID)
     if (FindShareEntry(questID) or shareDeclined[questID]) then
         return;
     end
+    if (not (C_QuestLog.GetLogIndexForQuestID(questID) and C_QuestLog.IsPushableQuest(questID))) then
+        return;
+    end
 
     StartShareEvents();
-    shareQueue[#shareQueue + 1] = { questID = questID, addedAt = GetTime(), ready = false, pushes = 0, members = {} };
-    ArmShareTimer();
+    shareQueue[#shareQueue + 1] = { questID = questID, pushes = 0, members = {} };
+    PumpShareQueue();
 end
 
 -- A separate frame so the skip key never affects sharing.
@@ -891,19 +862,6 @@ shareFrame:SetScript("OnEvent", function(_, event, arg1)
 
     if (event == "CHAT_MSG_SYSTEM") then
         OnShareMessage(arg1);
-    elseif (event == "QUEST_LOG_UPDATE") then
-        -- Frequent, so bail out unless some quest is still waiting for the log.
-        local waiting = false;
-        for _, entry in ipairs(shareQueue) do
-            if (not entry.ready) then
-                waiting = true;
-                break;
-            end
-        end
-        if (waiting) then
-            UpdateShareReadiness();
-            PumpShareQueue();
-        end
     elseif (event == "QUEST_REMOVED" or event == "QUEST_TURNED_IN") then
         local entry = FindShareEntry(arg1);
         if (entry) then
