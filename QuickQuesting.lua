@@ -365,14 +365,6 @@ local function StripGrammar(text)
     return text;
 end
 
-local function CleanShareText(text)
-    text = text:gsub("|c%x%x%x%x%x%x%x%x", "");
-    text = text:gsub("|r", "");
-    text = text:gsub("|H.-|h", "");
-    text = text:gsub("|h", "");
-    return StripGrammar(text);
-end
-
 local function BuildSharePatterns()
     if (sharePatterns ~= nil) then
         return;
@@ -803,7 +795,7 @@ local function OnShareMessage(text)
     if (IsSecret(text) or type(text) ~= "string") then
         return;
     end
-    text = CleanShareText(text);
+    text = StripGrammar(text);
 
     local nameless = shareNameless[text];
     if (nameless == "groupBlocked") then
