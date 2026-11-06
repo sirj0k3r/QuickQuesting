@@ -658,7 +658,7 @@ PumpShareQueue = function()
     ArmShareTimer();
 end
 
--- Anything not answered may have received the popup, and the timeout covers it. The caller
+-- A busy member silent on a re-push will send nothing to retry on, so that ends it. The caller
 -- pumps the queue afterwards.
 local function EndShareFlight()
     if (not shareFlight) then
@@ -668,9 +668,8 @@ local function EndShareFlight()
     shareFlightDeadline = nil;
 
     for name in pairs(shareExpected) do
-        if (shareRoster[name] and shareOpen[name] == nil and shareEntry.members[name] ~= SHARE_DONE) then
-            shareEntry.members[name] = SHARE_OPEN;
-            shareOpen[name] = { entry = shareEntry, deadline = GetTime() + SHARE_REPLY_SECONDS, expired = false, assumed = true };
+        if (shareOpen[name] == nil and shareEntry.members[name] == SHARE_BUSY) then
+            shareEntry.members[name] = SHARE_DONE;
         end
     end
     wipe(shareExpected);
