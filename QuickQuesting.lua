@@ -287,10 +287,8 @@ end
 -- Auto share
 ---------------------------------------------------------------------------
 
--- Pushing a later quest while a member still has an earlier popup open relies on the server
--- answering "busy" and leaving that popup alone; set false to always wait for every member
--- before the next quest.
-local SHARE_ALLOW_OVERLAP = true;
+-- A later quest is pushed while a member still has an earlier popup open: the server answers
+-- "busy" and leaves that popup alone.
 local SHARE_ACK_SECONDS = 3;
 local SHARE_REPLY_SECONDS = 60;
 local SHARE_LATE_SECONDS = 300;
@@ -344,7 +342,6 @@ local shareFlightDeadline = nil;
 local shareExpected = {};
 local shareRoster = {};
 local shareRosterBase = {};
-local shareAllowOverlap = SHARE_ALLOW_OVERLAP;
 local shareLoading = false;
 local shareTimer = nil;
 local sharePatterns = nil;
@@ -638,15 +635,6 @@ local function IsShareWanted(entry)
     return false;
 end
 
-local function HasActivePopup()
-    for _, open in pairs(shareOpen) do
-        if (not open.expired) then
-            return true;
-        end
-    end
-    return false;
-end
-
 local function UpdateShareReadiness()
     for i = #shareQueue, 1, -1 do
         local entry = shareQueue[i];
@@ -683,7 +671,7 @@ PumpShareQueue = function()
         return;
     end
 
-    if (not shareFlight and not IsSharePaused() and (shareAllowOverlap or not HasActivePopup())) then
+    if (not shareFlight and not IsSharePaused()) then
         local i = 1;
         while (shareQueue[i]) do
             local entry = shareQueue[i];
@@ -771,16 +759,9 @@ end
 local function OnShareSent(name)
     local entry = shareEntry;
     local open = shareOpen[name];
-    if (open and open.entry ~= entry and not open.expired) then
-        -- The server gave this member a new popup while we believed another one was open, so the
-        -- busy assumption does not hold here. Stop overlapping for this session and offer the
-        -- displaced quest again. A popup only assumed from silence proves nothing either way.
-        if (not open.assumed) then
-            shareAllowOverlap = false;
-        end
-        if (open.entry.members[name] == SHARE_OPEN) then
-            open.entry.members[name] = SHARE_BUSY;
-        end
+    if (open and open.entry ~= entry and open.entry.members[name] == SHARE_OPEN) then
+        -- A new popup means the earlier one closed without a reply, so none will come for it.
+        open.entry.members[name] = SHARE_DONE;
     end
     shareOpen[name] = { entry = entry, deadline = GetTime() + SHARE_REPLY_SECONDS, expired = false };
     if (entry.members[name] ~= SHARE_DONE) then
