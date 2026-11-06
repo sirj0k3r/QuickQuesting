@@ -2,7 +2,7 @@ local ADDON_NAME = ...;
 
 local PANEL_NAME = "Quick Questing";
 local RADIO_SPACING = 22;
-local LIST_HEIGHT = 130;
+local LIST_HEIGHT = 102;
 local ROW_HEIGHT = 24;
 
 local category = nil;
@@ -11,6 +11,7 @@ local radioGroups = {};
 local exceptionList = nil;
 local emptyLabel = nil;
 local autoShareCheck = nil;
+local autoAcceptCheck = nil;
 
 ---------------------------------------------------------------------------
 -- Radio groups
@@ -100,6 +101,7 @@ function QQ_RefreshOptions()
         RefreshRadioGroup(group);
     end
     autoShareCheck:SetChecked(QuickQuestingDB.autoShare);
+    autoAcceptCheck:SetChecked(QuickQuestingDB.autoAcceptShared);
 
     local dataProvider = CreateDataProvider();
     dataProvider:SetSortComparator(CompareExceptions, true);
@@ -177,9 +179,23 @@ local function CreatePanel()
     autoShareCheck:SetHitRectInsets(0, -(autoShareCheck.text:GetStringWidth() + 10), 0, 0);
     autoShareCheck:SetScript("OnClick", function(self)
         QuickQuestingDB.autoShare = self:GetChecked() and true or false;
-        if (not QuickQuestingDB.autoShare) then
+        if (QuickQuestingDB.autoShare) then
+            QuickQuestingDB.autoAcceptShared = true;
+            autoAcceptCheck:SetChecked(true);
+        else
             QQ_ClearShareQueue();
         end
+    end);
+    y = y - 28;
+
+    autoAcceptCheck = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate");
+    autoAcceptCheck:SetSize(24, 24);
+    autoAcceptCheck:SetPoint("TOPLEFT", panel, "TOPLEFT", 24, y);
+    autoAcceptCheck.text:SetFontObject("GameFontHighlight");
+    autoAcceptCheck.text:SetText("Accept quests shared with you");
+    autoAcceptCheck:SetHitRectInsets(0, -(autoAcceptCheck.text:GetStringWidth() + 10), 0, 0);
+    autoAcceptCheck:SetScript("OnClick", function(self)
+        QuickQuestingDB.autoAcceptShared = self:GetChecked() and true or false;
     end);
     y = y - 28;
 
@@ -251,6 +267,7 @@ local function CreatePanel()
         QuickQuestingDB.questScope = QQ_DEFAULTS.questScope;
         QuickQuestingDB.modifier = QQ_DEFAULTS.modifier;
         QuickQuestingDB.autoShare = QQ_DEFAULTS.autoShare;
+        QuickQuestingDB.autoAcceptShared = QQ_DEFAULTS.autoAcceptShared;
         QQ_ClearShareQueue();
         QQ_RefreshOptions();
     end;

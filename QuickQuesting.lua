@@ -28,6 +28,7 @@ QQ_DEFAULTS = {
     questScope = "all",
     modifier = "shift",
     autoShare = false,
+    autoAcceptShared = false,
 };
 
 QQ_RewardOptions = {
@@ -74,6 +75,9 @@ function QQ_InitDB()
     end
     if (type(QuickQuestingDB.autoShare) ~= "boolean") then
         QuickQuestingDB.autoShare = QQ_DEFAULTS.autoShare;
+    end
+    if (type(QuickQuestingDB.autoAcceptShared) ~= "boolean") then
+        QuickQuestingDB.autoAcceptShared = QuickQuestingDB.autoShare;
     end
 
     if (type(QuickQuestingDB.exceptions) ~= "table") then
@@ -350,6 +354,9 @@ local shareRecent = {};
 -- Quests someone declined. A push can't exclude a player, so these are never pushed again this
 -- session, even if that means a slower member misses them.
 local shareDeclined = {};
+-- Quests last offered by another player. Accepting one doesn't push it again: the party already got
+-- that offer, and a second push would prompt anyone who declined it again.
+local shareFromPlayer = {};
 
 local OnShareTimer;
 local PumpShareQueue;
@@ -880,6 +887,12 @@ local function OnShareMessage(text)
 end
 
 local function OnShareAccepted(questID)
+    -- Cleared before the other checks so the mark never outlives this accept.
+    local fromPlayer = shareFromPlayer[questID];
+    shareFromPlayer[questID] = nil;
+    if (fromPlayer) then
+        return;
+    end
     if (not (QuickQuestingDB and QuickQuestingDB.autoShare)) then
         return;
     end
@@ -1026,6 +1039,10 @@ local function OnQuestGreeting()
     end
 end
 
+local function IsQuestFromPlayer()
+    return UnitIsPlayer("questnpc") or UnitIsPlayer("npc");
+end
+
 local function OnQuestDetail(questStartItemID)
     -- Blizzard shows a confirmation popup (or the quest is not from an NPC) in these cases.
     if (questStartItemID ~= nil and questStartItemID ~= 0) then
@@ -1041,7 +1058,7 @@ local function OnQuestDetail(questStartItemID)
         leftForPlayer[GetQuestID()] = true;
         return;
     end
-    if (UnitIsPlayer("questnpc") or UnitIsPlayer("npc")) then
+    if (IsQuestFromPlayer() and not QuickQuestingDB.autoAcceptShared) then
         return;
     end
 
@@ -1152,6 +1169,15 @@ frame:SetScript("OnEvent", function(_, event, arg1, arg2)
 
     if (event == "QUEST_FINISHED") then
         pendingReward = nil;
+    end
+
+    if (event == "QUEST_DETAIL") then
+        -- Set or cleared on every offer, so a share that was declined and then taken from an NPC can
+        -- still be shared. Not cleared on QUEST_FINISHED, which can fire before QUEST_ACCEPTED.
+        local questID = GetQuestID();
+        if (questID and questID ~= 0) then
+            shareFromPlayer[questID] = IsQuestFromPlayer() or nil;
+        end
     end
 
     if (QQ_IsSkipKeyDown()) then
