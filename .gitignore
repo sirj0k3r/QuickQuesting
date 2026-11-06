@@ -1,0 +1,13 @@
+# MacOS hidden files
+*.DS_Store
+
+# Other Resources
+*.psd
+*.png
+
+# Export
+QuickQuesting
+*.zip
+
+# VS Code
+.vscode
