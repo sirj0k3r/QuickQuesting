@@ -480,11 +480,6 @@ local function ResolveShareName(captured, fuzzy)
     return nil;
 end
 
-local function IsSharePaused()
-    return shareLoading or InCombatLockdown()
-        or (C_ChatInfo.InChatMessagingLockdown and C_ChatInfo.InChatMessagingLockdown());
-end
-
 local function FindShareEntry(questID)
     for _, entry in ipairs(shareQueue) do
         if (entry.questID == questID) then
@@ -630,7 +625,9 @@ PumpShareQueue = function()
         return;
     end
 
-    if (not shareFlight and not IsSharePaused()) then
+    local paused = shareLoading or InCombatLockdown()
+        or (C_ChatInfo.InChatMessagingLockdown and C_ChatInfo.InChatMessagingLockdown());
+    if (not shareFlight and not paused) then
         local i = 1;
         while (shareQueue[i]) do
             local entry = shareQueue[i];
@@ -675,10 +672,6 @@ local function EndShareFlight()
     wipe(shareExpected);
 end
 
-local function ClearSharePopup(name)
-    shareOpen[name] = nil;
-end
-
 OnShareTimer = function()
     shareTimer = nil;
     local now = GetTime();
@@ -690,7 +683,7 @@ OnShareTimer = function()
     for name, open in pairs(shareOpen) do
         if (open.expired) then
             if (now >= open.forgetAt) then
-                ClearSharePopup(name);
+                shareOpen[name] = nil;
                 for _, entry in ipairs(shareQueue) do
                     if (entry.members[name] == SHARE_BUSY) then
                         entry.members[name] = SHARE_DONE;
@@ -755,7 +748,7 @@ local function OnShareAnswer(name, declined)
     if (declined) then
         shareDeclined[open.entry.questID] = true;
     end
-    ClearSharePopup(name);
+    shareOpen[name] = nil;
 end
 
 local function OnShareMessage(text)
