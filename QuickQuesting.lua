@@ -295,7 +295,6 @@ local SHARE_LATE_SECONDS = 300;
 local SHARE_LOG_GRACE_SECONDS = 5;
 local SHARE_MAX_PUSHES = 5;
 local SHARE_INFLECT_BYTES = 4;
-local SHARE_REPEAT_SECONDS = 0.05;
 
 local SHARE_OPEN = 1;
 local SHARE_BUSY = 2;
@@ -304,8 +303,6 @@ local SHARE_DONE = 3;
 -- The replies only need listening to while something is being shared.
 local SHARE_ACTIVE_EVENTS = {
     "CHAT_MSG_SYSTEM",
-    "UI_INFO_MESSAGE",
-    "UI_ERROR_MESSAGE",
     "QUEST_LOG_UPDATE",
     "QUEST_REMOVED",
     "QUEST_TURNED_IN",
@@ -347,7 +344,6 @@ local shareTimer = nil;
 local sharePatterns = nil;
 local shareNameless = nil;
 local shareActive = false;
-local shareRecent = {};
 -- Quests someone declined. A push can't exclude a player, so these are never pushed again this
 -- session, even if that means a slower member misses them.
 local shareDeclined = {};
@@ -559,7 +555,6 @@ local function StopShareIfIdle()
         end
         shareEntry = nil;
         wipe(shareExpected);
-        wipe(shareRecent);
         shareActive = false;
         return true;
     end
@@ -804,15 +799,6 @@ local function OnShareAnswer(name, declined)
     ClearSharePopup(name);
 end
 
--- The same reply can arrive through more than one event, and the first copy may already have
--- started the next push, so a second copy must not be read as a reply to that one.
-local function IsShareRepeat(text)
-    local now = GetTime();
-    local last = shareRecent[text];
-    shareRecent[text] = now;
-    return last ~= nil and now - last < SHARE_REPEAT_SECONDS;
-end
-
 local function OnShareMessage(text)
     if (IsSecret(text) or type(text) ~= "string") then
         return;
@@ -820,9 +806,6 @@ local function OnShareMessage(text)
     text = CleanShareText(text);
 
     local nameless = shareNameless[text];
-    if (nameless and IsShareRepeat(text)) then
-        return;
-    end
     if (nameless == "groupBlocked") then
         QQ_ClearShareQueue();
         return;
@@ -840,7 +823,7 @@ local function OnShareMessage(text)
         local captured = text:match(p.pattern);
         if (captured) then
             local name = ResolveShareName(captured, p.fuzzy);
-            if (not name or IsShareRepeat(text)) then
+            if (not name) then
                 return;
             end
             if (p.kind == "accepted" or p.kind == "declined") then
@@ -895,7 +878,7 @@ shareFrame:RegisterEvent("QUEST_ACCEPTED");
 shareFrame:RegisterEvent("PLAYER_LEAVING_WORLD");
 shareFrame:RegisterEvent("PLAYER_ENTERING_WORLD");
 
-shareFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
+shareFrame:SetScript("OnEvent", function(_, event, arg1)
     if (event == "QUEST_ACCEPTED") then
         OnShareAccepted(arg1);
         return;
@@ -916,8 +899,6 @@ shareFrame:SetScript("OnEvent", function(_, event, arg1, arg2)
 
     if (event == "CHAT_MSG_SYSTEM") then
         OnShareMessage(arg1);
-    elseif (event == "UI_INFO_MESSAGE" or event == "UI_ERROR_MESSAGE") then
-        OnShareMessage(arg2);
     elseif (event == "QUEST_LOG_UPDATE") then
         -- Frequent, so bail out unless some quest is still waiting for the log.
         local waiting = false;
