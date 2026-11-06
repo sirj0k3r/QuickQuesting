@@ -25,7 +25,8 @@ Hold the skip key while talking to an NPC and the addon does nothing, so you can
 
 ## Auto share
 * WoW can only share with the whole party, not one player. The addon reads the game's per-player replies to decide when to share again.
-* Players already on a quest get no prompt. A player who declined may see that quest again if someone else in the party was still busy and it gets shared again.
+* Players already on a quest get no prompt.
+* Once any player declines a quest, it isn't shared again this session, so nobody gets asked twice. The trade-off: a slower player who was still busy with an earlier quest misses that one. Later quests are still offered to everyone.
 * A player who doesn't answer within 60 seconds no longer holds anything up.
 * Waits while you are in combat, on a loading screen, or while the game restricts chat for addons (boss encounters, Mythic+, rated PvP). The queue is not kept across `/reload`.
 * The skip key does not stop sharing.

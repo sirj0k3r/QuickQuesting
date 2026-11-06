@@ -315,7 +315,8 @@ local SHARE_ACTIVE_EVENTS = {
 local SHARE_REPLY_KINDS = {
     { kind = "sent", suffixes = { "SUCCESS" } },
     { kind = "busy", suffixes = { "BUSY" } },
-    { kind = "answer", suffixes = { "ACCEPTED", "DECLINED" } },
+    { kind = "accepted", suffixes = { "ACCEPTED" } },
+    { kind = "declined", suffixes = { "DECLINED" } },
     { kind = "final", suffixes = {
         "ALREADY_DONE", "CLASS", "DEAD", "DIFFERENT_SERVER_DAILY", "EXPANSION", "HIGH_FACTION",
         "HIGH_LEVEL", "INVALID", "LOG_FULL", "LOW_FACTION", "LOW_LEVEL", "NEW_PLAYER_EXPERIENCE",
@@ -346,6 +347,9 @@ local sharePatterns = nil;
 local shareNameless = nil;
 local shareActive = false;
 local shareRecent = {};
+-- Quests someone declined. A push can't exclude a player, so these are never pushed again this
+-- session, even if that means a slower member misses them.
+local shareDeclined = {};
 
 local OnShareTimer;
 local PumpShareQueue;
@@ -585,8 +589,9 @@ end
 local function PruneShareQueue()
     for i = #shareQueue, 1, -1 do
         local entry = shareQueue[i];
-        if (entry.pushes > 0 and not (shareFlight and entry == shareEntry)) then
-            if (entry.pushes >= SHARE_MAX_PUSHES) then
+        local declined = shareDeclined[entry.questID];
+        if ((entry.pushes > 0 or declined) and not (shareFlight and entry == shareEntry)) then
+            if (declined or entry.pushes >= SHARE_MAX_PUSHES) then
                 for name, state in pairs(entry.members) do
                     if (state == SHARE_BUSY) then
                         entry.members[name] = SHARE_DONE;
@@ -608,7 +613,7 @@ local function PruneShareQueue()
 end
 
 local function IsShareWanted(entry)
-    if (entry.pushes >= SHARE_MAX_PUSHES) then
+    if (shareDeclined[entry.questID] or entry.pushes >= SHARE_MAX_PUSHES) then
         return false;
     end
     for name in pairs(shareRoster) do
@@ -799,12 +804,15 @@ local function OnShareFinal(name)
 end
 
 -- Answers name a player and not a quest, so they belong to whichever popup that member has open.
-local function OnShareAnswer(name)
+local function OnShareAnswer(name, declined)
     local open = shareOpen[name];
     if (open == nil) then
         return;
     end
     open.entry.members[name] = SHARE_DONE;
+    if (declined) then
+        shareDeclined[open.entry.questID] = true;
+    end
     ClearSharePopup(name);
 end
 
@@ -847,8 +855,8 @@ local function OnShareMessage(text)
             if (not name or IsShareRepeat(text)) then
                 return;
             end
-            if (p.kind == "answer") then
-                OnShareAnswer(name);
+            if (p.kind == "accepted" or p.kind == "declined") then
+                OnShareAnswer(name, p.kind == "declined");
             else
                 if (shareEntry == nil) then
                     return;
@@ -878,7 +886,7 @@ local function OnShareAccepted(questID)
     if (not IsInGroup()) then
         return;
     end
-    if (FindShareEntry(questID)) then
+    if (FindShareEntry(questID) or shareDeclined[questID]) then
         return;
     end
 
