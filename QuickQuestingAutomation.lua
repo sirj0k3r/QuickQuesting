@@ -212,6 +212,25 @@ local function OnQuestDetail(questStartItemID)
     end
 end
 
+-- Another player started a quest (an escort) and the game asks whether to join it.
+local function OnQuestAcceptConfirm(questID)
+    if (not QuickQuestingDB.autoAcceptShared or not QQ_ShouldHandle(questID)) then
+        return;
+    end
+    -- A full log shows Blizzard's "make room first" variant instead; joining would fail.
+    local _, numQuests = C_QuestLog.GetNumQuestLogEntries();
+    if (numQuests >= MAX_QUESTS) then
+        return;
+    end
+    -- QuestFlagsPVP only describes the quest window, so the quest's tag is checked instead.
+    local tagInfo = C_QuestLog.GetQuestTagInfo(questID);
+    if (tagInfo and tagInfo.tagID == Enum.QuestTag.PvP) then
+        return;
+    end
+    ConfirmAcceptQuest();
+    StaticPopup_Hide("QUEST_ACCEPT");
+end
+
 local function OnQuestProgress()
     local questID = GetQuestID();
     if (not QQ_ShouldHandle(questID)) then
@@ -283,8 +302,9 @@ frame:RegisterEvent("QUEST_ITEM_UPDATE");
 frame:RegisterEvent("ITEM_DATA_LOAD_RESULT");
 frame:RegisterEvent("QUEST_FINISHED");
 frame:RegisterEvent("QUEST_DATA_LOAD_RESULT");
+frame:RegisterEvent("QUEST_ACCEPT_CONFIRM");
 
-frame:SetScript("OnEvent", function(_, event, arg1, arg2)
+frame:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
     if (event == "ADDON_LOADED") then
         if (arg1 == ADDON_NAME) then
             QQ_InitDB();
@@ -324,6 +344,12 @@ frame:SetScript("OnEvent", function(_, event, arg1, arg2)
         end
     end
 
+    if (event == "QUEST_ACCEPT_CONFIRM" and arg3) then
+        -- Joined quests are never shared on, the party already got the prompt. Set even with the
+        -- skip key down or the option off, so a join by hand counts too.
+        shareFromPlayer[arg3] = "join";
+    end
+
     if (QQ_IsSkipKeyDown()) then
         return;
     end
@@ -334,6 +360,8 @@ frame:SetScript("OnEvent", function(_, event, arg1, arg2)
         OnQuestGreeting();
     elseif (event == "QUEST_DETAIL") then
         OnQuestDetail(arg1);
+    elseif (event == "QUEST_ACCEPT_CONFIRM" and arg3) then
+        OnQuestAcceptConfirm(arg3);
     elseif (event == "QUEST_PROGRESS") then
         OnQuestProgress();
     elseif (event == "QUEST_COMPLETE") then

@@ -51,7 +51,8 @@ local shareActive = false;
 local shareDeclined = {};
 -- Quests last offered by another player. Accepting one doesn't push it again: the party already got
 -- that offer, and a second push would prompt anyone who declined it again. true while that offer is
--- the one shown; the time it stopped being shown afterwards.
+-- the one shown; the time it stopped being shown afterwards; "join" for a quest another player
+-- started (escort prompt), which is never shared whenever it is accepted.
 local shareFromPlayer = {};
 QQ.shareFromPlayer = shareFromPlayer;
 
@@ -385,7 +386,8 @@ local function OnShareAccepted(questID)
     -- Cleared before the other checks so the mark never outlives this accept.
     local fromPlayer = shareFromPlayer[questID];
     shareFromPlayer[questID] = nil;
-    if (fromPlayer == true or (fromPlayer and GetTime() - fromPlayer < SHARE_FROM_PLAYER_SECONDS)) then
+    if (fromPlayer == true or fromPlayer == "join"
+        or (type(fromPlayer) == "number" and GetTime() - fromPlayer < SHARE_FROM_PLAYER_SECONDS)) then
         return;
     end
     if (not (QuickQuestingDB and QuickQuestingDB.autoShare)) then
