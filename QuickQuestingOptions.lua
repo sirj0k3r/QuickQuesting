@@ -158,14 +158,11 @@ local function CreatePanel()
     title:SetText(PANEL_NAME);
 
     local y = -52;
-    CreateHeader(panel, "When a turn-in offers a reward choice", y);
+    CreateHeader(panel, "Reward Choice", y);
     y = CreateRadioGroup(panel, "rewardMode", QQ_RewardOptions, y - 26);
-    local note = panel:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall");
-    note:SetPoint("TOPLEFT", panel, "TOPLEFT", 28, y - 2);
-    note:SetText("\"Nothing\" leaves the reward window open for you.");
 
     y = y - 30;
-    CreateHeader(panel, "Which quests to handle", y);
+    CreateHeader(panel, "Quests to Handle", y);
     y = CreateRadioGroup(panel, "questScope", QQ_ScopeOptions, y - 26);
 
     y = y - 12;
@@ -177,7 +174,7 @@ local function CreatePanel()
     autoShareCheck:SetSize(24, 24);
     autoShareCheck:SetPoint("TOPLEFT", panel, "TOPLEFT", 24, y);
     autoShareCheck.text:SetFontObject("GameFontHighlight");
-    autoShareCheck.text:SetText("Share quests you accept with your party");
+    autoShareCheck.text:SetText("Share quests with your party");
     autoShareCheck:SetHitRectInsets(0, -(autoShareCheck.text:GetStringWidth() + 10), 0, 0);
     autoShareCheck:SetScript("OnClick", function(self)
         QuickQuestingDB.autoShare = self:GetChecked() and true or false;
@@ -213,7 +210,7 @@ local function CreatePanel()
     y = y - 28;
 
     y = y - 12;
-    CreateHeader(panel, "Exceptions (never handled automatically)", y);
+    CreateHeader(panel, "Exceptions", y);
     y = y - 30;
 
     local editBox = CreateFrame("EditBox", nil, panel, "InputBoxTemplate");
