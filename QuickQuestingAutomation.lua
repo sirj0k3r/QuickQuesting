@@ -172,6 +172,18 @@ local function IsQuestFromPlayer()
     return UnitIsPlayer("questnpc") or UnitIsPlayer("npc");
 end
 
+-- A player's offer stops being the one shown when the quest window closes or shows another offer.
+-- Accepts can still arrive just after (some without a QUEST_DETAIL, such as an escort confirm), so
+-- the time is kept rather than the mark dropped.
+local function CloseShareMarks()
+    local now = GetTime();
+    for questID, mark in pairs(shareFromPlayer) do
+        if (mark == true) then
+            shareFromPlayer[questID] = now;
+        end
+    end
+end
+
 local function OnQuestDetail(questStartItemID)
     -- Blizzard shows a confirmation popup (or the quest is not from an NPC) in these cases.
     if (questStartItemID ~= nil and questStartItemID ~= 0) then
@@ -298,11 +310,14 @@ frame:SetScript("OnEvent", function(_, event, arg1, arg2)
 
     if (event == "QUEST_FINISHED") then
         pendingReward = nil;
+        -- Only timestamped, not cleared: QUEST_FINISHED can fire before QUEST_ACCEPTED.
+        CloseShareMarks();
     end
 
     if (event == "QUEST_DETAIL") then
         -- Set or cleared on every offer, so a share that was declined and then taken from an NPC can
-        -- still be shared. Not cleared on QUEST_FINISHED, which can fire before QUEST_ACCEPTED.
+        -- still be shared.
+        CloseShareMarks();
         local questID = GetQuestID();
         if (questID and questID ~= 0) then
             shareFromPlayer[questID] = IsQuestFromPlayer() or nil;

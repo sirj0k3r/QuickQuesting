@@ -19,6 +19,8 @@ local SHARE_ACK_SECONDS = 3;
 local SHARE_REPLY_SECONDS = 60;
 local SHARE_LATE_SECONDS = 300;
 local SHARE_MAX_PUSHES = 5;
+-- An accept arrives a server round trip after the quest window closes, in either order.
+local SHARE_FROM_PLAYER_SECONDS = 10;
 
 local SHARE_OPEN = 1;
 local SHARE_BUSY = 2;
@@ -48,7 +50,8 @@ local shareActive = false;
 -- and per quest when it is turned in.
 local shareDeclined = {};
 -- Quests last offered by another player. Accepting one doesn't push it again: the party already got
--- that offer, and a second push would prompt anyone who declined it again.
+-- that offer, and a second push would prompt anyone who declined it again. true while that offer is
+-- the one shown; the time it stopped being shown afterwards.
 local shareFromPlayer = {};
 QQ.shareFromPlayer = shareFromPlayer;
 
@@ -382,7 +385,7 @@ local function OnShareAccepted(questID)
     -- Cleared before the other checks so the mark never outlives this accept.
     local fromPlayer = shareFromPlayer[questID];
     shareFromPlayer[questID] = nil;
-    if (fromPlayer) then
+    if (fromPlayer == true or (fromPlayer and GetTime() - fromPlayer < SHARE_FROM_PLAYER_SECONDS)) then
         return;
     end
     if (not (QuickQuestingDB and QuickQuestingDB.autoShare)) then
