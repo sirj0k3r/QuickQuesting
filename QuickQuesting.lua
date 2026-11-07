@@ -303,7 +303,6 @@ local SHARE_DONE = 3;
 local SHARE_ACTIVE_EVENTS = {
     "CHAT_MSG_SYSTEM",
     "QUEST_REMOVED",
-    "QUEST_TURNED_IN",
     "GROUP_ROSTER_UPDATE",
     "PLAYER_REGEN_ENABLED",
     "ADDON_RESTRICTION_STATE_CHANGED",
@@ -342,8 +341,9 @@ local shareTimer = nil;
 local sharePatterns = nil;
 local shareNameless = nil;
 local shareActive = false;
--- Quests someone declined. A push can't exclude a player, so these are never pushed again this
--- session, even if that means a slower member misses them.
+-- Quests someone declined. A push can't exclude a player, so these are not pushed again while we
+-- stay in this group, even if that means a slower member misses them. Cleared when the group ends,
+-- and per quest when it is turned in.
 local shareDeclined = {};
 -- Quests last offered by another player. Accepting one doesn't push it again: the party already got
 -- that offer, and a second push would prompt anyone who declined it again.
@@ -833,6 +833,9 @@ shareFrame = CreateFrame("Frame");
 shareFrame:RegisterEvent("QUEST_ACCEPTED");
 shareFrame:RegisterEvent("PLAYER_LEAVING_WORLD");
 shareFrame:RegisterEvent("PLAYER_ENTERING_WORLD");
+-- Always registered: the decline marks must be cleared even while nothing is being shared.
+shareFrame:RegisterEvent("QUEST_TURNED_IN");
+shareFrame:RegisterEvent("GROUP_LEFT");
 
 shareFrame:SetScript("OnEvent", function(_, event, arg1)
     if (event == "QUEST_ACCEPTED") then
@@ -847,6 +850,16 @@ shareFrame:SetScript("OnEvent", function(_, event, arg1)
             PumpShareQueue();
         end
         return;
+    elseif (event == "GROUP_LEFT") then
+        -- A new group never saw the earlier offers. Leaving an instance group while still in the
+        -- home party keeps them.
+        if (not IsInGroup()) then
+            wipe(shareDeclined);
+        end
+        return;
+    elseif (event == "QUEST_TURNED_IN") then
+        -- A repeatable quest accepted again can be shared again.
+        shareDeclined[arg1] = nil;
     end
 
     if (not shareActive) then
