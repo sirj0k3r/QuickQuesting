@@ -11,10 +11,12 @@ local SHARE_REPLY_KINDS = {
     { kind = "busy", suffixes = { "BUSY" } },
     { kind = "accepted", suffixes = { "ACCEPTED" } },
     { kind = "declined", suffixes = { "DECLINED" } },
+    -- Can't take it right now; looked at again later.
+    { kind = "unable", suffixes = { "DEAD", "LOG_FULL", "TOO_FAR" } },
     { kind = "final", suffixes = {
-        "ALREADY_DONE", "CLASS", "DEAD", "DIFFERENT_SERVER_DAILY", "EXPANSION", "HIGH_FACTION",
-        "HIGH_LEVEL", "INVALID", "LOG_FULL", "LOW_FACTION", "LOW_LEVEL", "NEW_PLAYER_EXPERIENCE",
-        "NOT_GARRISON_OWNER", "ONQUEST", "PREREQUISITE", "RACE", "TOO_FAR", "WRONG_COVENANT",
+        "ALREADY_DONE", "CLASS", "DIFFERENT_SERVER_DAILY", "EXPANSION", "HIGH_FACTION",
+        "HIGH_LEVEL", "INVALID", "LOW_FACTION", "LOW_LEVEL", "NEW_PLAYER_EXPERIENCE",
+        "NOT_GARRISON_OWNER", "ONQUEST", "PREREQUISITE", "RACE", "WRONG_COVENANT",
         "WRONG_FACTION",
     } },
 };
@@ -27,6 +29,7 @@ local SHARE_NAMELESS_KINDS = {
 
 local shareRoster = {};
 local shareRosterBase = {};
+local shareRosterUnit = {};
 local sharePatterns = {};
 local shareNameless = {};
 
@@ -56,7 +59,7 @@ local function BuildSharePatterns()
                 if (pattern:find("\001", 1, true)) then
                     pattern = pattern:gsub("[%^%$%(%)%%%.%[%]%*%+%-%?]", "%%%0");
                     pattern = pattern:gsub("\001", "(.+)");
-                    sharePatterns[#sharePatterns + 1] = { pattern = "^" .. pattern .. "$", kind = group.kind, fuzzy = fuzzy };
+                    sharePatterns[#sharePatterns + 1] = { pattern = "^" .. pattern .. "$", kind = group.kind, suffix = suffix, fuzzy = fuzzy };
                 end
             end
         end
@@ -75,6 +78,7 @@ end
 local function RefreshShareRoster()
     wipe(shareRoster);
     wipe(shareRosterBase);
+    wipe(shareRosterUnit);
 
     local prefix = IsInRaid() and "raid" or "party";
     for i = 1, GetNumGroupMembers() do
@@ -87,6 +91,7 @@ local function RefreshShareRoster()
                     key = name .. "-" .. (realm:gsub(" ", ""));
                 end
                 shareRoster[key] = true;
+                shareRosterUnit[key] = unit;
                 if (shareRosterBase[name] == nil) then
                     shareRosterBase[name] = key;
                 else
@@ -162,5 +167,6 @@ QQ.BuildSharePatterns = BuildSharePatterns;
 QQ.RefreshShareRoster = RefreshShareRoster;
 QQ.ResolveShareName = ResolveShareName;
 QQ.shareRoster = shareRoster;
+QQ.shareRosterUnit = shareRosterUnit;
 QQ.sharePatterns = sharePatterns;
 QQ.shareNameless = shareNameless;

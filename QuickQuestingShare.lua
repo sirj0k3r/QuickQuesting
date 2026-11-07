@@ -6,6 +6,7 @@ local BuildSharePatterns = QQ.BuildSharePatterns;
 local RefreshShareRoster = QQ.RefreshShareRoster;
 local ResolveShareName = QQ.ResolveShareName;
 local shareRoster = QQ.shareRoster;
+local shareRosterUnit = QQ.shareRosterUnit;
 local sharePatterns = QQ.sharePatterns;
 local shareNameless = QQ.shareNameless;
 
@@ -17,7 +18,13 @@ local shareNameless = QQ.shareNameless;
 -- "busy" and leaves that popup alone.
 local SHARE_ACK_SECONDS = 3;
 local SHARE_REPLY_SECONDS = 60;
+-- How long after a popup times out its answer still counts.
 local SHARE_LATE_SECONDS = 300;
+-- A player who let the popup time out gets one more share this long after, to give them time to
+-- come back. An answer before then settles it. Must stay under SHARE_LATE_SECONDS.
+local SHARE_SILENT_RETRY_SECONDS = 180;
+-- How often a player who couldn't take the quest (too far, dead, log full) is looked at again.
+local SHARE_UNABLE_RETRY_SECONDS = 30;
 local SHARE_MAX_PUSHES = 5;
 -- An accept arrives a server round trip after the quest window closes, in either order.
 local SHARE_FROM_PLAYER_SECONDS = 10;
@@ -25,11 +32,14 @@ local SHARE_FROM_PLAYER_SECONDS = 10;
 local SHARE_OPEN = 1;
 local SHARE_BUSY = 2;
 local SHARE_DONE = 3;
+local SHARE_RETRY = 4; -- timed out once, one more share due at retryAt
+local SHARE_UNABLE = 5; -- too far, dead or log full; shared again once they look able
 
 -- The replies only need listening to while something is being shared.
 local SHARE_ACTIVE_EVENTS = {
     "CHAT_MSG_SYSTEM",
     "QUEST_REMOVED",
+    "QUEST_TURNED_IN",
     "GROUP_ROSTER_UPDATE",
     "PLAYER_REGEN_ENABLED",
     "ADDON_RESTRICTION_STATE_CHANGED",
@@ -45,10 +55,6 @@ local shareExpected = {};
 local shareLoading = false;
 local shareTimer = nil;
 local shareActive = false;
--- Quests someone declined. A push can't exclude a player, so these are not pushed again while we
--- stay in this group, even if that means a slower member misses them. Cleared when the group ends,
--- and per quest when it is turned in.
-local shareDeclined = {};
 -- Quests last offered by another player. Accepting one doesn't push it again: the party already got
 -- that offer, and a second push would prompt anyone who declined it again. true while that offer is
 -- the one shown; the time it stopped being shown afterwards; "join" for a quest another player
@@ -91,6 +97,22 @@ local function ArmShareTimer()
         local at = open.expired and open.forgetAt or open.deadline;
         if (earliest == nil or at < earliest) then
             earliest = at;
+        end
+    end
+    -- Retries already due wait for the next pump (end of combat, a reply...), not for the timer.
+    local now = GetTime();
+    for _, entry in ipairs(shareQueue) do
+        for name, state in pairs(entry.members) do
+            local at = nil;
+            if (state == SHARE_RETRY) then
+                at = entry.retryAt[name];
+            elseif (state == SHARE_UNABLE) then
+                local unable = entry.unable[name];
+                at = unable.due and unable.giveUpAt or math.min(unable.nextAt, unable.giveUpAt);
+            end
+            if (at and at > now and (earliest == nil or at < earliest)) then
+                earliest = at;
+            end
         end
     end
     if (earliest == nil) then
@@ -144,18 +166,17 @@ end
 local function PruneShareQueue()
     for i = #shareQueue, 1, -1 do
         local entry = shareQueue[i];
-        local declined = shareDeclined[entry.questID];
-        if ((entry.pushes > 0 or declined) and not (shareFlight and entry == shareEntry)) then
-            if (declined or entry.pushes >= SHARE_MAX_PUSHES) then
+        if (entry.pushes > 0 and not (shareFlight and entry == shareEntry)) then
+            if (entry.pushes >= SHARE_MAX_PUSHES) then
                 for name, state in pairs(entry.members) do
-                    if (state == SHARE_BUSY) then
+                    if (state == SHARE_BUSY or state == SHARE_RETRY or state == SHARE_UNABLE) then
                         entry.members[name] = SHARE_DONE;
                     end
                 end
             end
             local waiting = false;
             for _, state in pairs(entry.members) do
-                if (state == SHARE_OPEN or state == SHARE_BUSY) then
+                if (state ~= SHARE_DONE) then
                     waiting = true;
                     break;
                 end
@@ -168,9 +189,10 @@ local function PruneShareQueue()
 end
 
 local function IsShareWanted(entry)
-    if (shareDeclined[entry.questID] or entry.pushes >= SHARE_MAX_PUSHES) then
+    if (entry.pushes >= SHARE_MAX_PUSHES) then
         return false;
     end
+    local now = GetTime();
     for name in pairs(shareRoster) do
         local open = shareOpen[name];
         local state = entry.members[name];
@@ -181,9 +203,32 @@ local function IsShareWanted(entry)
             end
         elseif (state == SHARE_BUSY and open == nil) then
             return true;
+        elseif (state == SHARE_RETRY and now >= entry.retryAt[name]) then
+            return true;
+        elseif (state == SHARE_UNABLE and entry.unable[name].due and open == nil) then
+            return true;
         end
     end
     return false;
+end
+
+-- Whether a player who couldn't take the quest looks able to now. A full log can't be seen.
+local function LooksAbleNow(name, reason)
+    local unit = shareRosterUnit[name];
+    if (unit == nil) then
+        return false;
+    end
+    if (reason == "DEAD") then
+        local dead = UnitIsDeadOrGhost(unit);
+        return IsSecret(dead) or not dead;
+    elseif (reason == "TOO_FAR") then
+        local inRange, checked = UnitInRange(unit);
+        if (IsSecret(inRange) or IsSecret(checked)) then
+            return true;
+        end
+        return inRange or not checked;
+    end
+    return true;
 end
 
 PumpShareQueue = function()
@@ -244,7 +289,10 @@ local function EndShareFlight()
     shareFlightDeadline = nil;
 
     for name in pairs(shareExpected) do
-        if (shareRoster[name] and shareOpen[name] == nil and shareEntry.members[name] ~= SHARE_DONE) then
+        if (shareEntry.members[name] == SHARE_RETRY) then
+            -- Their one retry went unanswered.
+            shareEntry.members[name] = SHARE_DONE;
+        elseif (shareRoster[name] and shareOpen[name] == nil and shareEntry.members[name] ~= SHARE_DONE) then
             shareEntry.members[name] = SHARE_OPEN;
             shareOpen[name] = { entry = shareEntry, deadline = GetTime() + SHARE_REPLY_SECONDS, expired = false, assumed = true };
         end
@@ -263,9 +311,11 @@ OnShareTimer = function()
     for name, open in pairs(shareOpen) do
         if (open.expired) then
             if (now >= open.forgetAt) then
+                -- No answer will be read for them any more, so nothing of theirs waits on one.
                 shareOpen[name] = nil;
                 for _, entry in ipairs(shareQueue) do
-                    if (entry.members[name] == SHARE_BUSY) then
+                    local state = entry.members[name];
+                    if (state == SHARE_BUSY or state == SHARE_RETRY or state == SHARE_OPEN) then
                         entry.members[name] = SHARE_DONE;
                     end
                 end
@@ -273,9 +323,32 @@ OnShareTimer = function()
         elseif (now >= open.deadline) then
             open.expired = true;
             open.forgetAt = now + SHARE_LATE_SECONDS;
-            -- Timed out: final for this quest, never a reason to push it again.
-            if (open.entry.members[name] == SHARE_OPEN) then
-                open.entry.members[name] = SHARE_DONE;
+            local entry = open.entry;
+            if (entry.members[name] == SHARE_OPEN) then
+                if (entry.retried[name]) then
+                    entry.members[name] = SHARE_DONE;
+                else
+                    entry.retried[name] = true;
+                    entry.retryAt[name] = now + SHARE_SILENT_RETRY_SECONDS;
+                    entry.members[name] = SHARE_RETRY;
+                end
+            end
+        end
+    end
+
+    for _, entry in ipairs(shareQueue) do
+        for name, state in pairs(entry.members) do
+            if (state == SHARE_UNABLE) then
+                local unable = entry.unable[name];
+                if (now >= unable.giveUpAt) then
+                    entry.members[name] = SHARE_DONE;
+                elseif (not unable.due and now >= unable.nextAt) then
+                    if (LooksAbleNow(name, unable.reason)) then
+                        unable.due = true;
+                    else
+                        unable.nextAt = now + SHARE_UNABLE_RETRY_SECONDS;
+                    end
+                end
             end
         end
     end
@@ -300,6 +373,10 @@ local function OnShareBusy(name)
     local entry = shareEntry;
     local open = shareOpen[name];
     if (open and open.entry == entry) then
+        -- Their popup for this very quest is still up: that was their retry, the answer still counts.
+        if (entry.members[name] == SHARE_RETRY) then
+            entry.members[name] = SHARE_OPEN;
+        end
         return;
     end
     if (entry.members[name] == SHARE_DONE) then
@@ -318,16 +395,31 @@ local function OnShareFinal(name)
     shareEntry.members[name] = SHARE_DONE;
 end
 
+local function OnShareUnable(name, reason)
+    local entry = shareEntry;
+    if (entry.members[name] == SHARE_DONE) then
+        return;
+    end
+    local now = GetTime();
+    local unable = entry.unable[name];
+    if (unable == nil or entry.members[name] ~= SHARE_UNABLE) then
+        unable = { giveUpAt = now + SHARE_LATE_SECONDS };
+        entry.unable[name] = unable;
+    end
+    unable.reason = reason;
+    unable.nextAt = now + SHARE_UNABLE_RETRY_SECONDS;
+    unable.due = false;
+    entry.members[name] = SHARE_UNABLE;
+end
+
 -- Answers name a player and not a quest, so they belong to whichever popup that member has open.
-local function OnShareAnswer(name, declined)
+-- Accepting and declining are both final for that player only.
+local function OnShareAnswer(name)
     local open = shareOpen[name];
     if (open == nil) then
         return;
     end
     open.entry.members[name] = SHARE_DONE;
-    if (declined and not open.entry.turnedIn) then
-        shareDeclined[open.entry.questID] = true;
-    end
     shareOpen[name] = nil;
 end
 
@@ -359,7 +451,7 @@ local function OnShareMessage(text)
                 return;
             end
             if (p.kind == "accepted" or p.kind == "declined") then
-                OnShareAnswer(name, p.kind == "declined");
+                OnShareAnswer(name);
             else
                 if (shareEntry == nil) then
                     return;
@@ -368,6 +460,8 @@ local function OnShareMessage(text)
                     OnShareSent(name);
                 elseif (p.kind == "busy") then
                     OnShareBusy(name);
+                elseif (p.kind == "unable") then
+                    OnShareUnable(name, p.suffix);
                 else
                     OnShareFinal(name);
                 end
@@ -396,7 +490,7 @@ local function OnShareAccepted(questID)
     if (not IsInGroup()) then
         return;
     end
-    if (FindShareEntry(questID) or shareDeclined[questID]) then
+    if (FindShareEntry(questID)) then
         return;
     end
     if (not (C_QuestLog.GetLogIndexForQuestID(questID) and C_QuestLog.IsPushableQuest(questID))) then
@@ -404,7 +498,7 @@ local function OnShareAccepted(questID)
     end
 
     StartShareEvents();
-    shareQueue[#shareQueue + 1] = { questID = questID, pushes = 0, members = {} };
+    shareQueue[#shareQueue + 1] = { questID = questID, pushes = 0, members = {}, retried = {}, retryAt = {}, unable = {} };
     PumpShareQueue();
 end
 
@@ -413,9 +507,6 @@ shareFrame = CreateFrame("Frame");
 shareFrame:RegisterEvent("QUEST_ACCEPTED");
 shareFrame:RegisterEvent("PLAYER_LEAVING_WORLD");
 shareFrame:RegisterEvent("PLAYER_ENTERING_WORLD");
--- Always registered: the decline marks must be cleared even while nothing is being shared.
-shareFrame:RegisterEvent("QUEST_TURNED_IN");
-shareFrame:RegisterEvent("GROUP_LEFT");
 
 shareFrame:SetScript("OnEvent", function(_, event, arg1)
     if (event == "QUEST_ACCEPTED") then
@@ -430,22 +521,6 @@ shareFrame:SetScript("OnEvent", function(_, event, arg1)
             PumpShareQueue();
         end
         return;
-    elseif (event == "GROUP_LEFT") then
-        -- A new group never saw the earlier offers. Leaving an instance group while still in the
-        -- home party keeps them.
-        if (not IsInGroup()) then
-            wipe(shareDeclined);
-        end
-        return;
-    elseif (event == "QUEST_TURNED_IN") then
-        -- A repeatable quest accepted again can be shared again. A popup still open for it belongs
-        -- to the turned-in quest, so declining it later must not mark the new one.
-        shareDeclined[arg1] = nil;
-        for _, open in pairs(shareOpen) do
-            if (open.entry.questID == arg1) then
-                open.entry.turnedIn = true;
-            end
-        end
     end
 
     if (not shareActive) then

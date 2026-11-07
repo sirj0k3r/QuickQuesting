@@ -31,8 +31,12 @@ Hold the skip key while talking to an NPC, or when a shared quest or a join prom
 ## Auto share
 * WoW can only share with the whole party, not one player. The addon reads the game's per-player replies to decide when to share again.
 * Players already on a quest get no prompt.
-* Once any player declines a quest, it isn't shared again while you stay in that group, so nobody gets asked twice, even if you abandon and accept it again. It can be shared again once you turn it in, or in a new group. The trade-off: a slower player who was still busy with an earlier quest misses that one. Later quests are still offered to everyone.
-* A player who doesn't answer within 60 seconds no longer holds anything up.
+* A quest keeps being shared until every player has accepted or declined it, or can't take it. Declining is final for that player only.
+* The trade-off: WoW can't leave anyone out of a share, so when the quest is shared again for someone else, players who declined it are asked again. At most 5 shares per quest.
+* A player still deciding on an earlier quest gets this one after answering.
+* A player who doesn't answer within 60 seconds no longer holds anything up, and gets the quest once more 3 minutes later, in case they were away. If they answer the first popup before then, that settles it.
+* A player who is too far, dead or has a full quest log gets it again once they look able (checked every 30 seconds, for up to 5 minutes).
+* Players already on the quest, who completed it, or who aren't eligible (level, class and the like) are not asked again.
 * Waits while you are in combat, on a loading screen, or while the game restricts chat for addons (boss encounters, Mythic+, rated PvP). The queue is not kept across `/reload`.
 * A quest you accept from another player's share, or join from their prompt, isn't shared again, whether you accepted it automatically or by hand.
 * The skip key does not stop sharing.
