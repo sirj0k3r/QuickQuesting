@@ -11,6 +11,7 @@ local radioGroups = {};
 local exceptionList = nil;
 local emptyLabel = nil;
 local autoShareCheck = nil;
+local zoneOnlyCheck = nil;
 local autoAcceptCheck = nil;
 
 ---------------------------------------------------------------------------
@@ -101,6 +102,7 @@ function QQ_RefreshOptions()
         RefreshRadioGroup(group);
     end
     autoShareCheck:SetChecked(QuickQuestingDB.autoShare);
+    zoneOnlyCheck:SetChecked(QuickQuestingDB.shareZoneOnly);
     autoAcceptCheck:SetChecked(QuickQuestingDB.autoAcceptShared);
 
     local dataProvider = CreateDataProvider();
@@ -188,6 +190,17 @@ local function CreatePanel()
     end);
     y = y - 28;
 
+    zoneOnlyCheck = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate");
+    zoneOnlyCheck:SetSize(24, 24);
+    zoneOnlyCheck:SetPoint("TOPLEFT", panel, "TOPLEFT", 48, y);
+    zoneOnlyCheck.text:SetFontObject("GameFontHighlight");
+    zoneOnlyCheck.text:SetText("Only share with players in your zone");
+    zoneOnlyCheck:SetHitRectInsets(0, -(zoneOnlyCheck.text:GetStringWidth() + 10), 0, 0);
+    zoneOnlyCheck:SetScript("OnClick", function(self)
+        QuickQuestingDB.shareZoneOnly = self:GetChecked() and true or false;
+    end);
+    y = y - 28;
+
     autoAcceptCheck = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate");
     autoAcceptCheck:SetSize(24, 24);
     autoAcceptCheck:SetPoint("TOPLEFT", panel, "TOPLEFT", 24, y);
@@ -267,6 +280,7 @@ local function CreatePanel()
         QuickQuestingDB.questScope = QQ_DEFAULTS.questScope;
         QuickQuestingDB.modifier = QQ_DEFAULTS.modifier;
         QuickQuestingDB.autoShare = QQ_DEFAULTS.autoShare;
+        QuickQuestingDB.shareZoneOnly = QQ_DEFAULTS.shareZoneOnly;
         QuickQuestingDB.autoAcceptShared = QQ_DEFAULTS.autoAcceptShared;
         QQ_ClearShareQueue();
         QQ_RefreshOptions();

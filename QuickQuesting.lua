@@ -3,6 +3,7 @@ QQ_DEFAULTS = {
     questScope = "all",
     modifier = "shift",
     autoShare = false,
+    shareZoneOnly = true,
     autoAcceptShared = false,
 };
 
@@ -50,6 +51,9 @@ function QQ_InitDB()
     end
     if (type(QuickQuestingDB.autoShare) ~= "boolean") then
         QuickQuestingDB.autoShare = QQ_DEFAULTS.autoShare;
+    end
+    if (type(QuickQuestingDB.shareZoneOnly) ~= "boolean") then
+        QuickQuestingDB.shareZoneOnly = QQ_DEFAULTS.shareZoneOnly;
     end
     if (type(QuickQuestingDB.autoAcceptShared) ~= "boolean") then
         QuickQuestingDB.autoAcceptShared = QuickQuestingDB.autoShare;

@@ -18,6 +18,7 @@
 * **Share quests you accept with your party** (off by default)
     * Applies to the quests you accept, automated or by hand, except those another player shared with you or that you joined from another player's prompt: the party already got that offer
     * One quest at a time per player: nobody's open quest popup is replaced, and a player who is still deciding gets the next quest after answering
+    * **Only share with players in your zone** (on by default): a quest is shared only if another party member is in your zone (caves, sub-zones and dungeon floors count as the zone), and only they are waited on. See Auto share
 * **Accept quests shared with you** (off by default; ticking the share option above turns it on)
     * Also joins quests another player starts, such as an escort (the "is starting ... Would you like to as well?" prompt)
     * Works without auto share. If you untick it, it stays off until you next tick the share option
@@ -36,6 +37,8 @@ Hold the skip key while talking to an NPC, or when a shared quest or a join prom
 * A player still deciding on an earlier quest gets this one after answering.
 * A player who doesn't answer within 60 seconds no longer holds anything up, and gets the quest once more 3 minutes later, in case they were away. If they answer the first popup before then, that settles it.
 * A player who is too far, dead or has a full quest log gets it again once they look able (checked every 30 seconds, for up to 5 minutes).
+* With **Only share with players in your zone** on, a quest is shared only while at least one other player is in your zone. If nobody is, it isn't shared, and it isn't shared later when someone arrives. WoW still shows the share to everyone in the party, but players outside your zone never cause it to be shared again. A player who comes into your zone gets the quest with the next share that goes out for someone else.
+* Zones are checked each time a quest is about to be shared. If your own zone can't be read, quests are shared as if the option were off. A player whose zone can't be read counts as outside it, except in an instance or a raid when no player's zone can be read.
 * Players already on the quest, who completed it, or who aren't eligible (level, class and the like) are not asked again.
 * Waits while you are in combat, on a loading screen, or while the game restricts chat for addons (boss encounters, Mythic+, rated PvP). The queue is not kept across `/reload`.
 * A quest you accept from another player's share, or join from their prompt, isn't shared again, whether you accepted it automatically or by hand.

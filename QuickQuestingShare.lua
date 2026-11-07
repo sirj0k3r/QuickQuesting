@@ -34,6 +34,7 @@ local SHARE_BUSY = 2;
 local SHARE_DONE = 3;
 local SHARE_RETRY = 4; -- timed out once, one more share due at retryAt
 local SHARE_UNABLE = 5; -- too far, dead or log full; shared again once they look able
+local SHARE_AWAY = 6; -- out of your zone when last looked at: not waited on, asked again only by a share going out anyway
 
 -- The replies only need listening to while something is being shared.
 local SHARE_ACTIVE_EVENTS = {
@@ -52,6 +53,7 @@ local shareEntry = nil;
 local shareFlight = false;
 local shareFlightDeadline = nil;
 local shareExpected = {};
+local shareZones = {};
 local shareLoading = false;
 local shareTimer = nil;
 local shareActive = false;
@@ -179,7 +181,7 @@ local function PruneShareQueue()
             end
             local waiting = false;
             for _, state in pairs(entry.members) do
-                if (state ~= SHARE_DONE) then
+                if (state ~= SHARE_DONE and state ~= SHARE_AWAY) then
                     waiting = true;
                     break;
                 end
@@ -191,7 +193,7 @@ local function PruneShareQueue()
     end
 end
 
-local function IsShareWanted(entry)
+local function IsShareWanted(entry, zones)
     if (entry.pushes >= SHARE_MAX_PUSHES) then
         return false;
     end
@@ -199,17 +201,20 @@ local function IsShareWanted(entry)
     for name in pairs(shareRoster) do
         local open = shareOpen[name];
         local state = entry.members[name];
-        if (entry.pushes == 0) then
-            -- A member whose popup timed out does not hold back a new quest.
-            if (state == nil and (open == nil or open.expired)) then
+        -- Out-of-zone members never make a quest wanted.
+        if (zones == nil or zones[name]) then
+            if (entry.pushes == 0) then
+                -- A member whose popup timed out does not hold back a new quest.
+                if (state == nil and (open == nil or open.expired)) then
+                    return true;
+                end
+            elseif (state == SHARE_BUSY and open == nil) then
+                return true;
+            elseif (state == SHARE_RETRY and now >= entry.retryAt[name]) then
+                return true;
+            elseif (state == SHARE_UNABLE and entry.unable[name].due and open == nil) then
                 return true;
             end
-        elseif (state == SHARE_BUSY and open == nil) then
-            return true;
-        elseif (state == SHARE_RETRY and now >= entry.retryAt[name]) then
-            return true;
-        elseif (state == SHARE_UNABLE and entry.unable[name].due and open == nil) then
-            return true;
         end
     end
     return false;
@@ -234,7 +239,98 @@ local function LooksAbleNow(name, reason)
     return true;
 end
 
+-- The zone a unit is in, so caves, sub-zones and dungeon floors count as their zone. A map with
+-- no zone above it (some instances, orphan maps) stands for itself or for its group of floors.
+-- nil when the map can't be read.
+local function GetZoneKey(unit)
+    local mapID = C_Map.GetBestMapForUnit(unit);
+    if (mapID == nil or IsSecret(mapID)) then
+        return nil;
+    end
+    local key = nil;
+    local info = C_Map.GetMapInfo(mapID);
+    -- Bounded in case of a parent loop.
+    for _ = 1, 20 do
+        if (info == nil) then
+            break;
+        end
+        local mapType = info.mapType;
+        if (mapType == Enum.UIMapType.Zone) then
+            return info.mapID;
+        elseif (mapType == Enum.UIMapType.Continent or mapType == Enum.UIMapType.World or mapType == Enum.UIMapType.Cosmic) then
+            break;
+        end
+        key = info.mapID;
+        if (not info.parentMapID or info.parentMapID == 0) then
+            break;
+        end
+        info = C_Map.GetMapInfo(info.parentMapID);
+    end
+    if (key) then
+        local group = C_Map.GetMapGroupID(key);
+        if (group and group ~= 0) then
+            return "group" .. group;
+        end
+    end
+    return key;
+end
+
+-- Whether each member is in your zone, or nil when sharing isn't limited by zone: the option is
+-- off or your own zone is unknown. In an instance or a raid, where members' maps may not be
+-- readable, a party whose maps all can't be read isn't limited either. Otherwise a member whose
+-- zone is unknown counts as out of it.
+local function GetShareZones()
+    if (not (QuickQuestingDB and QuickQuestingDB.shareZoneOnly)) then
+        return nil;
+    end
+    local own = GetZoneKey("player");
+    if (own == nil) then
+        return nil;
+    end
+    wipe(shareZones);
+    local known = false;
+    for name in pairs(shareRoster) do
+        local unit = shareRosterUnit[name];
+        local key = unit and GetZoneKey(unit);
+        if (key ~= nil) then
+            known = true;
+        end
+        shareZones[name] = (key ~= nil and key == own);
+    end
+    if (not known and (IsInInstance() or IsInRaid())) then
+        return nil;
+    end
+    return shareZones;
+end
+
+local function HasZoneMember(zones)
+    for _, inZone in pairs(zones) do
+        if (inZone) then
+            return true;
+        end
+    end
+    return false;
+end
+
+-- A member who left your zone is no longer waited on. A popup they still have open keeps being
+-- tracked, and its answer is read as usual.
+local function SweepShareZones(zones)
+    for _, entry in ipairs(shareQueue) do
+        if (entry.pushes > 0) then
+            for name, state in pairs(entry.members) do
+                if (not zones[name] and (state == SHARE_BUSY or state == SHARE_RETRY or state == SHARE_UNABLE)) then
+                    entry.members[name] = SHARE_AWAY;
+                end
+            end
+        end
+    end
+end
+
 PumpShareQueue = function()
+    local zones = GetShareZones();
+    if (zones) then
+        SweepShareZones(zones);
+    end
     PruneShareQueue();
     if (StopShareIfIdle()) then
         return;
@@ -255,14 +351,34 @@ PumpShareQueue = function()
     local paused = shareLoading or InCombatLockdown()
         or (C_ChatInfo.InChatMessagingLockdown and C_ChatInfo.InChatMessagingLockdown());
     if (not shareFlight and not paused) then
+        -- Nobody else is in your zone: quests not shared yet are dropped rather than kept waiting.
+        if (zones and not HasZoneMember(zones)) then
+            for i = #shareQueue, 1, -1 do
+                if (shareQueue[i].pushes == 0) then
+                    table.remove(shareQueue, i);
+                end
+            end
+            if (StopShareIfIdle()) then
+                return;
+            end
+        end
         local i = 1;
         while (shareQueue[i]) do
             local entry = shareQueue[i];
-            if (IsShareWanted(entry)) then
+            if (IsShareWanted(entry, zones)) then
                 -- The log index is passed so the quest selected in the log is never touched.
                 local index = C_QuestLog.GetLogIndexForQuestID(entry.questID);
                 if (index and C_QuestLog.IsPushableQuest(entry.questID) and pcall(QuestLogPushQuest, index)) then
                     entry.pushes = entry.pushes + 1;
+                    -- Back in your zone, or no longer limited by zone: this share asks them afresh.
+                    for name in pairs(shareRoster) do
+                        if (entry.members[name] == SHARE_AWAY and (zones == nil or zones[name])) then
+                            entry.members[name] = nil;
+                            entry.retried[name] = nil;
+                            entry.retryAt[name] = nil;
+                            entry.unable[name] = nil;
+                        end
+                    end
                     shareEntry = entry;
                     shareFlight = true;
                     shareFlightDeadline = GetTime() + SHARE_ACK_SECONDS;
