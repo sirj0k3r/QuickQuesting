@@ -321,7 +321,7 @@ local function OnShareAnswer(name, declined)
         return;
     end
     open.entry.members[name] = SHARE_DONE;
-    if (declined) then
+    if (declined and not open.entry.turnedIn) then
         shareDeclined[open.entry.questID] = true;
     end
     shareOpen[name] = nil;
@@ -433,8 +433,14 @@ shareFrame:SetScript("OnEvent", function(_, event, arg1)
         end
         return;
     elseif (event == "QUEST_TURNED_IN") then
-        -- A repeatable quest accepted again can be shared again.
+        -- A repeatable quest accepted again can be shared again. A popup still open for it belongs
+        -- to the turned-in quest, so declining it later must not mark the new one.
         shareDeclined[arg1] = nil;
+        for _, open in pairs(shareOpen) do
+            if (open.entry.questID == arg1) then
+                open.entry.turnedIn = true;
+            end
+        end
     end
 
     if (not shareActive) then
