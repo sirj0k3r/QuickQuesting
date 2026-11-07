@@ -99,18 +99,21 @@ local function ArmShareTimer()
             earliest = at;
         end
     end
-    -- Retries already due wait for the next pump (end of combat, a reply...), not for the timer.
+    -- A retry already due waits for the next pump (end of combat, a reply...), not for the timer,
+    -- so it is skipped here. The timer itself handles unable deadlines, even late ones.
     local now = GetTime();
     for _, entry in ipairs(shareQueue) do
         for name, state in pairs(entry.members) do
             local at = nil;
             if (state == SHARE_RETRY) then
-                at = entry.retryAt[name];
+                if (entry.retryAt[name] > now) then
+                    at = entry.retryAt[name];
+                end
             elseif (state == SHARE_UNABLE) then
                 local unable = entry.unable[name];
                 at = unable.due and unable.giveUpAt or math.min(unable.nextAt, unable.giveUpAt);
             end
-            if (at and at > now and (earliest == nil or at < earliest)) then
+            if (at and (earliest == nil or at < earliest)) then
                 earliest = at;
             end
         end
