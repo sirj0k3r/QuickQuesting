@@ -5,6 +5,7 @@
 * Picks your reward when there is a choice (optional)
 * Shares the quests you accept with your party (optional)
 * Accepts quests other players share with you (optional)
+* Abandons a quest when you click it in the quest log or tracker while holding a modifier key (on by default)
 
 ## Settings
 * **When a turn-in offers a reward choice**
@@ -23,11 +24,17 @@
     * Also joins quests another player starts, such as an escort (the "is starting ... Would you like to as well?" prompt)
     * Works without auto share. If you untick it, it stays off until you next tick the share option
     * Your exceptions, the quest scope and the skip key all apply
+* **Abandon quests with a modifier click** (on by default)
+    * **Hold this key while clicking a quest**: **Shift**, **Ctrl** or **Option / Alt** (default)
+    * Works on quests in the quest log and in the objective tracker. See Abandon
 * **Exceptions**
     * Quests that are never handled automatically. Add them by quest ID or from your quest log; all managed in the settings panel.
 
 ## Skip key
 Hold the skip key while talking to an NPC, or when a shared quest or a join prompt pops up, and the addon does nothing, so you can read and handle the quest yourself.
+
+## Abandon
+Hold the abandon key and click a quest in the quest log or the objective tracker to abandon it right away, with no confirmation. A chat message links the abandoned quest. This is the former **Quick Abandon** addon, now built in: if you had it installed you can uninstall it, and your old behavior (Alt, enabled) is the default here.
 
 ## Auto share
 * WoW can only share with the whole party, not one player. The addon reads the game's per-player replies to decide when to share again.

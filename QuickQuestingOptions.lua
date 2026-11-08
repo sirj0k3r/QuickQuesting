@@ -13,6 +13,7 @@ local emptyLabel = nil;
 local autoShareCheck = nil;
 local zoneOnlyCheck = nil;
 local autoAcceptCheck = nil;
+local abandonCheck = nil;
 
 ---------------------------------------------------------------------------
 -- Radio groups
@@ -104,6 +105,7 @@ function QQ_RefreshOptions()
     autoShareCheck:SetChecked(QuickQuestingDB.autoShare);
     zoneOnlyCheck:SetChecked(QuickQuestingDB.shareZoneOnly);
     autoAcceptCheck:SetChecked(QuickQuestingDB.autoAcceptShared);
+    abandonCheck:SetChecked(QuickQuestingDB.abandonEnabled);
 
     local dataProvider = CreateDataProvider();
     dataProvider:SetSortComparator(CompareExceptions, true);
@@ -210,6 +212,26 @@ local function CreatePanel()
     y = y - 28;
 
     y = y - 12;
+    CreateHeader(panel, "Abandon", y);
+    y = y - 30;
+
+    abandonCheck = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate");
+    abandonCheck:SetSize(24, 24);
+    abandonCheck:SetPoint("TOPLEFT", panel, "TOPLEFT", 24, y);
+    abandonCheck.text:SetFontObject("GameFontHighlight");
+    abandonCheck.text:SetText("Abandon quests with a modifier click");
+    abandonCheck:SetHitRectInsets(0, -(abandonCheck.text:GetStringWidth() + 10), 0, 0);
+    abandonCheck:SetScript("OnClick", function(self)
+        QuickQuestingDB.abandonEnabled = self:GetChecked() and true or false;
+    end);
+    y = y - 28;
+
+    local abandonLabel = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal");
+    abandonLabel:SetPoint("TOPLEFT", panel, "TOPLEFT", 28, y);
+    abandonLabel:SetText("Hold this key while clicking a quest");
+    y = CreateRadioGroup(panel, "abandonModifier", QQ_ModifierOptions, y - 22);
+
+    y = y - 12;
     CreateHeader(panel, "Exceptions", y);
     y = y - 30;
 
@@ -279,6 +301,8 @@ local function CreatePanel()
         QuickQuestingDB.autoShare = QQ_DEFAULTS.autoShare;
         QuickQuestingDB.shareZoneOnly = QQ_DEFAULTS.shareZoneOnly;
         QuickQuestingDB.autoAcceptShared = QQ_DEFAULTS.autoAcceptShared;
+        QuickQuestingDB.abandonEnabled = QQ_DEFAULTS.abandonEnabled;
+        QuickQuestingDB.abandonModifier = QQ_DEFAULTS.abandonModifier;
         QQ_ClearShareQueue();
         QQ_RefreshOptions();
     end;

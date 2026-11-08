@@ -5,6 +5,8 @@ QQ_DEFAULTS = {
     autoShare = false,
     shareZoneOnly = true,
     autoAcceptShared = false,
+    abandonEnabled = true,
+    abandonModifier = "alt",
 };
 
 QQ_RewardOptions = {
@@ -58,6 +60,12 @@ function QQ_InitDB()
     if (type(QuickQuestingDB.autoAcceptShared) ~= "boolean") then
         QuickQuestingDB.autoAcceptShared = QuickQuestingDB.autoShare;
     end
+    if (type(QuickQuestingDB.abandonEnabled) ~= "boolean") then
+        QuickQuestingDB.abandonEnabled = QQ_DEFAULTS.abandonEnabled;
+    end
+    if (not IsValidOption(QQ_ModifierOptions, QuickQuestingDB.abandonModifier)) then
+        QuickQuestingDB.abandonModifier = QQ_DEFAULTS.abandonModifier;
+    end
 
     if (type(QuickQuestingDB.exceptions) ~= "table") then
         QuickQuestingDB.exceptions = {};
@@ -71,17 +79,20 @@ function QQ_InitDB()
 end
 
 ---------------------------------------------------------------------------
--- Skip key
+-- Modifier keys
 ---------------------------------------------------------------------------
 
-function QQ_IsSkipKeyDown()
-    local modifier = QuickQuestingDB.modifier;
+function QQ_IsModifierDown(modifier)
     if (modifier == "ctrl") then
         return IsControlKeyDown();
     elseif (modifier == "alt") then
         return IsAltKeyDown();
     end
     return IsShiftKeyDown();
+end
+
+function QQ_IsSkipKeyDown()
+    return QQ_IsModifierDown(QuickQuestingDB.modifier);
 end
 
 ---------------------------------------------------------------------------

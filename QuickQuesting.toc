@@ -1,8 +1,8 @@
 ## Interface: 120105, 16001
 ## Title: Quick Questing
-## Version: 1.0.0
+## Version: 1.1.0
 ## Author: SirJ0K3R
-## Notes: Automatically accepts and turns in quests. Hold a modifier key to handle a quest yourself
+## Notes: Automatically accepts and turns in quests. Hold a modifier key to handle a quest yourself. Also abandons quests with a modifier click
 ## Category: Quests
 ## IconTexture: Interface\AddOns\QuickQuesting\Resources\QuickQuesting-32.tga
 ## SavedVariables: QuickQuestingDB
@@ -12,4 +12,5 @@ QuickQuestingRewards.lua
 QuickQuestingShareReplies.lua
 QuickQuestingShare.lua
 QuickQuestingAutomation.lua
+QuickQuestingAbandon.lua
 QuickQuestingOptions.lua
