@@ -1,65 +1,12 @@
 local ADDON_NAME = ...;
 
-local PANEL_NAME = "Quick Questing";
-local RADIO_SPACING = 22;
 local LIST_HEIGHT = 102;
 local ROW_HEIGHT = 24;
 
 local category = nil;
-local panel = nil;
-local radioGroups = {};
+local exceptionsPanel = nil;
 local exceptionList = nil;
 local emptyLabel = nil;
-local autoShareCheck = nil;
-local zoneOnlyCheck = nil;
-local autoAcceptCheck = nil;
-local abandonCheck = nil;
-
----------------------------------------------------------------------------
--- Radio groups
----------------------------------------------------------------------------
-
-local function RefreshRadioGroup(group)
-    local current = QuickQuestingDB[group.dbKey];
-    for _, radio in ipairs(group.buttons) do
-        radio:SetChecked(radio.optionKey == current);
-    end
-end
-
-local function CreateRadioGroup(parent, dbKey, options, anchorY)
-    local group = { dbKey = dbKey, buttons = {} };
-
-    for i, option in ipairs(options) do
-        local radio = CreateFrame("CheckButton", nil, parent, "UIRadioButtonTemplate");
-        radio:SetPoint("TOPLEFT", parent, "TOPLEFT", 28, anchorY - (i - 1) * RADIO_SPACING);
-        radio.optionKey = option.key;
-        radio.text:SetText(option.label);
-        radio:SetHitRectInsets(0, -(radio.text:GetStringWidth() + 10), 0, 0);
-
-        if (option.disabled) then
-            radio:Disable();
-            radio.text:SetTextColor(GRAY_FONT_COLOR:GetRGB());
-        else
-            radio.text:SetTextColor(HIGHLIGHT_FONT_COLOR:GetRGB());
-            radio:SetScript("OnClick", function(self)
-                QuickQuestingDB[dbKey] = self.optionKey;
-                RefreshRadioGroup(group);
-            end);
-        end
-
-        group.buttons[#group.buttons + 1] = radio;
-    end
-
-    radioGroups[#radioGroups + 1] = group;
-    return anchorY - #options * RADIO_SPACING;
-end
-
-local function CreateHeader(parent, text, y)
-    local header = parent:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge");
-    header:SetPoint("TOPLEFT", parent, "TOPLEFT", 16, y);
-    header:SetText(text);
-    return header;
-end
 
 ---------------------------------------------------------------------------
 -- Exceptions list
@@ -95,17 +42,9 @@ local function CompareExceptions(a, b)
 end
 
 function QQ_RefreshOptions()
-    if (panel == nil) then
+    if (exceptionsPanel == nil) then
         return;
     end
-
-    for _, group in ipairs(radioGroups) do
-        RefreshRadioGroup(group);
-    end
-    autoShareCheck:SetChecked(QuickQuestingDB.autoShare);
-    zoneOnlyCheck:SetChecked(QuickQuestingDB.shareZoneOnly);
-    autoAcceptCheck:SetChecked(QuickQuestingDB.autoAcceptShared);
-    abandonCheck:SetChecked(QuickQuestingDB.abandonEnabled);
 
     local dataProvider = CreateDataProvider();
     dataProvider:SetSortComparator(CompareExceptions, true);
@@ -148,96 +87,41 @@ local function ShowQuestLogMenu(owner)
 end
 
 ---------------------------------------------------------------------------
--- Panel
+-- Settings
 ---------------------------------------------------------------------------
 
-local function CreatePanel()
-    panel = CreateFrame("Frame");
-    panel.name = PANEL_NAME;
+local function AddCheckbox(category, key, label, tooltip)
+    local setting = Settings.RegisterAddOnSetting(category, "QuickQuesting_" .. key, key, QuickQuestingDB, Settings.VarType.Boolean, label, QQ_DEFAULTS[key]);
+    local initializer = Settings.CreateCheckbox(category, setting, tooltip);
+    return setting, initializer;
+end
+
+local function AddDropdown(category, key, label, options, tooltip)
+    local setting = Settings.RegisterAddOnSetting(category, "QuickQuesting_" .. key, key, QuickQuestingDB, Settings.VarType.String, label, QQ_DEFAULTS[key]);
+    local function GetOptions()
+        local container = Settings.CreateControlTextContainer();
+        for _, option in ipairs(options) do
+            if (not option.disabled) then
+                container:Add(option.key, option.label);
+            end
+        end
+        return container:GetData();
+    end
+    local initializer = Settings.CreateDropdown(category, setting, GetOptions, tooltip);
+    return setting, initializer;
+end
+
+local function CreateExceptionsPanel()
+    exceptionsPanel = CreateFrame("Frame");
+    local panel = exceptionsPanel;
 
     local title = panel:CreateFontString(nil, "ARTWORK", "GameFontNormalHuge");
     title:SetPoint("TOPLEFT", panel, "TOPLEFT", 16, -16);
-    title:SetText(PANEL_NAME);
-
-    local y = -52;
-    CreateHeader(panel, "Reward Choice", y);
-    y = CreateRadioGroup(panel, "rewardMode", QQ_RewardOptions, y - 26);
-
-    y = y - 30;
-    CreateHeader(panel, "Quests to Handle", y);
-    y = CreateRadioGroup(panel, "questScope", QQ_ScopeOptions, y - 26);
-
-    y = y - 12;
-    CreateHeader(panel, "Hold this key to skip automation", y);
-    y = CreateRadioGroup(panel, "modifier", QQ_ModifierOptions, y - 26);
-
-    y = y - 6;
-    autoShareCheck = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate");
-    autoShareCheck:SetSize(24, 24);
-    autoShareCheck:SetPoint("TOPLEFT", panel, "TOPLEFT", 24, y);
-    autoShareCheck.text:SetFontObject("GameFontHighlight");
-    autoShareCheck.text:SetText("Share quests with your party");
-    autoShareCheck:SetHitRectInsets(0, -(autoShareCheck.text:GetStringWidth() + 10), 0, 0);
-    autoShareCheck:SetScript("OnClick", function(self)
-        QuickQuestingDB.autoShare = self:GetChecked() and true or false;
-        if (QuickQuestingDB.autoShare) then
-            QuickQuestingDB.autoAcceptShared = true;
-            autoAcceptCheck:SetChecked(true);
-        else
-            QQ_ClearShareQueue();
-        end
-    end);
-    y = y - 28;
-
-    zoneOnlyCheck = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate");
-    zoneOnlyCheck:SetSize(24, 24);
-    zoneOnlyCheck:SetPoint("TOPLEFT", panel, "TOPLEFT", 48, y);
-    zoneOnlyCheck.text:SetFontObject("GameFontHighlight");
-    zoneOnlyCheck.text:SetText("Only share with players in your zone");
-    zoneOnlyCheck:SetHitRectInsets(0, -(zoneOnlyCheck.text:GetStringWidth() + 10), 0, 0);
-    zoneOnlyCheck:SetScript("OnClick", function(self)
-        QuickQuestingDB.shareZoneOnly = self:GetChecked() and true or false;
-    end);
-    y = y - 28;
-
-    autoAcceptCheck = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate");
-    autoAcceptCheck:SetSize(24, 24);
-    autoAcceptCheck:SetPoint("TOPLEFT", panel, "TOPLEFT", 24, y);
-    autoAcceptCheck.text:SetFontObject("GameFontHighlight");
-    autoAcceptCheck.text:SetText("Accept quests shared with you");
-    autoAcceptCheck:SetHitRectInsets(0, -(autoAcceptCheck.text:GetStringWidth() + 10), 0, 0);
-    autoAcceptCheck:SetScript("OnClick", function(self)
-        QuickQuestingDB.autoAcceptShared = self:GetChecked() and true or false;
-    end);
-    y = y - 28;
-
-    y = y - 12;
-    CreateHeader(panel, "Abandon", y);
-    y = y - 30;
-
-    abandonCheck = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate");
-    abandonCheck:SetSize(24, 24);
-    abandonCheck:SetPoint("TOPLEFT", panel, "TOPLEFT", 24, y);
-    abandonCheck.text:SetFontObject("GameFontHighlight");
-    abandonCheck.text:SetText("Abandon quests with a modifier click");
-    abandonCheck:SetHitRectInsets(0, -(abandonCheck.text:GetStringWidth() + 10), 0, 0);
-    abandonCheck:SetScript("OnClick", function(self)
-        QuickQuestingDB.abandonEnabled = self:GetChecked() and true or false;
-    end);
-    y = y - 28;
-
-    local abandonLabel = panel:CreateFontString(nil, "ARTWORK", "GameFontNormal");
-    abandonLabel:SetPoint("TOPLEFT", panel, "TOPLEFT", 28, y);
-    abandonLabel:SetText("Hold this key while clicking a quest");
-    y = CreateRadioGroup(panel, "abandonModifier", QQ_ModifierOptions, y - 22);
-
-    y = y - 12;
-    CreateHeader(panel, "Exceptions", y);
-    y = y - 30;
+    title:SetText("Exceptions");
 
     local editBox = CreateFrame("EditBox", nil, panel, "InputBoxTemplate");
     editBox:SetSize(180, 22);
-    editBox:SetPoint("TOPLEFT", panel, "TOPLEFT", 30, y);
+    editBox:SetPoint("TOPLEFT", panel, "TOPLEFT", 30, -60);
     editBox:SetAutoFocus(false);
     editBox:SetMaxLetters(255);
 
@@ -294,21 +178,46 @@ local function CreatePanel()
 
     panel.OnRefresh = QQ_RefreshOptions;
     panel.OnCommit = function() end;
-    panel.OnDefault = function()
-        QuickQuestingDB.rewardMode = QQ_DEFAULTS.rewardMode;
-        QuickQuestingDB.questScope = QQ_DEFAULTS.questScope;
-        QuickQuestingDB.modifier = QQ_DEFAULTS.modifier;
-        QuickQuestingDB.autoShare = QQ_DEFAULTS.autoShare;
-        QuickQuestingDB.shareZoneOnly = QQ_DEFAULTS.shareZoneOnly;
-        QuickQuestingDB.autoAcceptShared = QQ_DEFAULTS.autoAcceptShared;
-        QuickQuestingDB.abandonEnabled = QQ_DEFAULTS.abandonEnabled;
-        QuickQuestingDB.abandonModifier = QQ_DEFAULTS.abandonModifier;
-        QQ_ClearShareQueue();
-        QQ_RefreshOptions();
-    end;
+    panel.OnDefault = function() end;
+    panel:SetScript("OnShow", QQ_RefreshOptions);
 
-    category = Settings.RegisterCanvasLayoutCategory(panel, PANEL_NAME);
-    Settings.RegisterAddOnCategory(category);
+    return panel;
+end
+
+local function CreateSettings()
+    local layout;
+    category, layout = QuickAddons:RegisterVerticalSubcategory("Questing");
+
+    layout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Automation"));
+    AddDropdown(category, "rewardMode", "Reward Choice", QQ_RewardOptions, "Reward to pick when a quest offers a choice.");
+    AddDropdown(category, "questScope", "Quests to Handle", QQ_ScopeOptions, nil);
+    AddDropdown(category, "modifier", "Skip Key", QQ_ModifierOptions, "Hold this key to skip automation");
+
+    layout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Sharing"));
+    local autoShareSetting, autoShareInitializer = AddCheckbox(category, "autoShare", "Share quests with your party");
+    local _, zoneOnlyInitializer = AddCheckbox(category, "shareZoneOnly", "Only share with players in your zone");
+    zoneOnlyInitializer:SetParentInitializer(autoShareInitializer, function()
+        return autoShareSetting:GetValue();
+    end);
+    local autoAcceptSetting = AddCheckbox(category, "autoAcceptShared", "Accept quests shared with you");
+    autoShareSetting:SetValueChangedCallback(function(_, value)
+        if (value) then
+            autoAcceptSetting:SetValue(true);
+        else
+            QQ_ClearShareQueue();
+        end
+    end);
+
+    layout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Abandon"));
+    local abandonEnabledSetting, abandonEnabledInitializer = AddCheckbox(category, "abandonEnabled", "Abandon quests with a modifier click");
+    local _, abandonKeyInitializer = AddDropdown(category, "abandonModifier", "Abandon Key", QQ_ModifierOptions, "Hold this key while clicking a quest");
+    abandonKeyInitializer:SetParentInitializer(abandonEnabledInitializer, function()
+        return abandonEnabledSetting:GetValue();
+    end);
+
+    Settings.RegisterCanvasLayoutSubcategory(category, CreateExceptionsPanel(), "Exceptions");
+
+    QuickAddons:RegisterMember(ADDON_NAME, "Questing", "Automatically accepts and turns in quests.", category);
 end
 
 local loader = CreateFrame("Frame");
@@ -322,7 +231,7 @@ loader:SetScript("OnEvent", function(self, _, addonName)
     if (QuickQuestingDB == nil or QuickQuestingDB.exceptions == nil) then
         QQ_InitDB();
     end
-    CreatePanel();
+    CreateSettings();
     QQ_RefreshOptions();
 end)
 
