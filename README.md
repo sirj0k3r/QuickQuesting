@@ -34,7 +34,7 @@
 Hold the skip key while talking to an NPC, or when a shared quest or a join prompt pops up, and the addon does nothing, so you can read and handle the quest yourself.
 
 ## Abandon
-Hold the abandon key and click a quest in the quest log or the objective tracker to abandon it right away, with no confirmation. A chat message links the abandoned quest. This is the former **Quick Abandon** addon, now built in: if you had it installed you can uninstall it, and your old behavior (Alt, enabled) is the default here.
+Hold the abandon key and click a quest in the quest log or the objective tracker to abandon it right away, with no confirmation. A chat message links the abandoned quest. This is the former **Quick Abandon** addon, now built in: if you still have it installed, Quick Questing offers to disable it and reload your UI on login (or you can uninstall it), and your old behavior (Alt, enabled) is the default here.
 
 ## Auto share
 * WoW can only share with the whole party, not one player. The addon reads the game's per-player replies to decide when to share again.

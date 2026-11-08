@@ -56,6 +56,23 @@ local function IsOldAbandonHooking()
     return major < 1 or (major == 1 and minor < 1);
 end
 
+StaticPopupDialogs["QUICKQUESTING_DISABLE_QUICKABANDON"] = {
+    text = "Quick Abandon is now built into Quick Questing.\n\nDisable Quick Abandon and reload your UI?",
+    button1 = "Disable and Reload",
+    button2 = "Not Now",
+    OnAccept = function()
+        C_AddOns.DisableAddOn(OLD_ADDON_NAME);
+        ReloadUI();
+    end,
+    OnCancel = function()
+        print("Quick Questing: Quick Abandon is now built in; you can uninstall it.");
+    end,
+    timeout = 0,
+    whileDead = true,
+    hideOnEscape = true,
+    preferredIndex = 3,
+};
+
 local frame = CreateFrame("Frame");
 frame:RegisterEvent("PLAYER_LOGIN");
 frame:SetScript("OnEvent", function(self)
@@ -63,7 +80,7 @@ frame:SetScript("OnEvent", function(self)
 
     -- All addons are loaded by now, so this works whichever loaded first.
     if (C_AddOns.IsAddOnLoaded(OLD_ADDON_NAME)) then
-        print("Quick Questing: Quick Abandon is now built in; you can uninstall it.");
+        StaticPopup_Show("QUICKQUESTING_DISABLE_QUICKABANDON");
         if (IsOldAbandonHooking()) then
             return;
         end
