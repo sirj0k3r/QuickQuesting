@@ -3,6 +3,7 @@
 ## Version: 1.0.0
 ## Author: SirJ0K3R
 ## Notes: Automatically accepts and turns in quests. Hold a modifier key to handle a quest yourself
+## Category: Quests
 ## IconTexture: Interface\AddOns\QuickQuesting\Resources\QuickQuesting-32.tga
 ## SavedVariables: QuickQuestingDB
 
